@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Home Assistant configuration – reTerminal e-ink panels
+#
+#  Everything for the panels lives in packages/, one file per feature:
+#
+#    packages/panel_core.yaml     date, weather, rooms, voice "show …"  (always)
+#    packages/panel_energy.yaml   grid, prices, history, power chart
+#    packages/panel_solar.yaml    solar power + history, 4 h solar forecast
+#    packages/panel_water.yaml    water meter history + cost
+#    packages/panel_heating.yaml  rooms → thermostat, boiler time + cost
+#    packages/panel_plants.yaml   15 plants: name, icon, room, watering
+#    packages/panel_agenda.yaml   calendar events + tasks
+#    packages/panel_lights.yaml   Lights page: rooms, lights, devices, All lights
+#
+#  Each file starts with its own YOUR SETTINGS block – that's the only part
+#  you need to edit. Don't use a feature? Delete its file (or rename it to
+#  .yaml.off) and restart; the panels skip what they don't get. On the
+#  reTerminal, also switch it off in Settings → Features (DIY panel: the
+#  show_* lines at the top of its YAML).
+#
+#  Also needed (same config folder):
+#    custom_templates/panel_rooms.jinja, panel_stats.jinja, panel_plants.jinja,
+#    panel_sun.jinja
+#    custom_sentences/en/panel.yaml   (voice commands)
+#  Dashboard cards to paste (Edit dashboard → Add card → Manual):
+#    cards/prices-card.yaml, cards/plants-card.yaml, cards/panels-card.yaml
+#
+#  Needs Home Assistant 2025.1 or newer.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Loads the default set of integrations. Do not remove.
+default_config:
+
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+homeassistant:
+  packages: !include_dir_named packages

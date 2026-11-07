@@ -1,0 +1,62 @@
+{#- ─────────────────────────────────────────────────────────────────────────
+    reTerminal panels – SUN + CLOUDS (used by panel_core.yaml, panel_solar.yaml)
+    Put this file in  <config>/custom_templates/panel_sun.jinja
+
+    How much the weather lets the sun through, for the solar strip over the
+    3 h forecast and the 4 h solar forecast on the power chart. Sunrise and
+    sunset come from sun.sun (the Sun integration, on by default).
+    ───────────────────────────────────────────────────────────────────────── -#}
+
+{#- today's sunrise,sunset as timestamps ('' if sun.sun is missing) -#}
+{%- macro _sun() -%}
+  {%- set nr = as_timestamp(state_attr('sun.sun', 'next_rising'), 0) -%}
+  {%- set nst = as_timestamp(state_attr('sun.sun', 'next_setting'), 0) -%}
+  {%- if nr and nst -%}
+    {%- set rise = nr - 86400 if is_state('sun.sun', 'above_horizon') else nr -%}
+    {%- set sset = nst if nst > rise else nst + 86400 -%}
+    {{- rise | int }},{{ sset | int -}}
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- share of the time between t0 and t1 (timestamps) that's daylight, 0…1 -#}
+{%- macro daylight(t0, t1) -%}
+  {%- set s = _sun() -%}
+  {%- if not s or t1 <= t0 -%}{{- 0 -}}{%- else -%}
+    {%- set rise = s.split(',')[0] | int -%}{%- set sset = s.split(',')[1] | int -%}
+    {%- set ns = namespace(o=0) -%}
+    {%- for k in range(-1, 3) -%}
+      {%- set a = [t0, rise + k * 86400] | max -%}{%- set b = [t1, sset + k * 86400] | min -%}
+      {%- if b > a -%}{%- set ns.o = ns.o + (b - a) -%}{%- endif -%}
+    {%- endfor -%}
+    {{- (ns.o / (t1 - t0)) | round(2) -}}
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- where the sun is at time t: 0 at night, rising to 1 at midday (sine) -#}
+{%- macro shape(t) -%}
+  {%- set s = _sun() -%}
+  {%- set ns = namespace(v=0) -%}
+  {%- if s -%}
+    {%- set rise = s.split(',')[0] | int -%}{%- set sset = s.split(',')[1] | int -%}
+    {%- for k in range(-1, 3) -%}
+      {%- set r = rise + k * 86400 -%}{%- set e = sset + k * 86400 -%}
+      {%- if r <= t <= e -%}{%- set ns.v = sin(pi * (t - r) / (e - r)) -%}{%- endif -%}
+    {%- endfor -%}
+  {%- endif -%}
+  {{- ns.v | round(3) -}}
+{%- endmacro -%}
+
+{#- how much light gets through the clouds, 0…1, from a forecast condition
+    and (when the weather service gives it) the cloud cover in % -#}
+{%- macro cloud(cond, cc=none) -%}
+  {%- set base = {'sunny': 1.0, 'clear-night': 1.0, 'windy': 0.9, 'partlycloudy': 0.65,
+                  'windy-variant': 0.6, 'cloudy': 0.35, 'fog': 0.3, 'exceptional': 0.3,
+                  'rainy': 0.25, 'lightning': 0.25, 'snowy': 0.2, 'snowy-rainy': 0.2,
+                  'hail': 0.15, 'pouring': 0.15, 'lightning-rainy': 0.15}.get(cond, 0.5) -%}
+  {%- if cc is number -%}
+    {%- set wet = cond in ['rainy', 'pouring', 'snowy', 'snowy-rainy', 'hail', 'lightning-rainy'] -%}
+    {{- ((1 - 0.7 * cc / 100) * (0.7 if wet else 1)) | round(2) -}}
+  {%- else -%}
+    {{- base -}}
+  {%- endif -%}
+{%- endmacro -%}

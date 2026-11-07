@@ -1,0 +1,426 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  reTerminal panels – PLANTS
+#
+#  Up to 15 plants: name, icon, room, glass size, days per glass. Thirst
+#  follows the room temperature. Edit them with plants-card.yaml.
+#
+#  Needs:  panel_core.yaml (rooms), custom_templates/panel_plants.jinja
+#  To turn this feature off: delete this file, or rename it so it no
+#  longer ends in .yaml (e.g. panel_x.yaml.off), and restart Home Assistant.
+# ═══════════════════════════════════════════════════════════════════════════
+
+input_number:
+
+  # ── Plants: how fast the panel's plant reservoirs empty ─────────────────
+  # Glass size (ml) and how many days one glass lasts at 20 °C, per plant.
+  # The panel works out evaporation from these and the room temperature.
+  plant_water_multiplier:
+    name: "Plant Water Multiplier"
+    min: 0.1
+    max: 5
+    step: 0.05
+    mode: box
+    icon: mdi:tune-variant
+  plant_1_glass_ml:
+    name: "Plant 1 Glass"
+    min: 10
+    max: 2000
+    step: 10
+    unit_of_measurement: "ml"
+    mode: box
+    icon: mdi:cup-water
+  plant_1_days:
+    name: "Plant 1 Days per Glass"
+    min: 0.5
+    max: 60
+    step: 0.5
+    unit_of_measurement: "d"
+    mode: box
+    icon: mdi:calendar-clock
+  plant_2_glass_ml: {name: "Plant 2 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_2_days: {name: "Plant 2 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_3_glass_ml: {name: "Plant 3 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_3_days: {name: "Plant 3 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_4_glass_ml: {name: "Plant 4 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_4_days: {name: "Plant 4 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_5_glass_ml: {name: "Plant 5 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_5_days: {name: "Plant 5 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_6_glass_ml: {name: "Plant 6 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_6_days: {name: "Plant 6 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_7_glass_ml: {name: "Plant 7 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_7_days: {name: "Plant 7 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_8_glass_ml: {name: "Plant 8 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_8_days: {name: "Plant 8 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_9_glass_ml: {name: "Plant 9 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_9_days: {name: "Plant 9 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_10_glass_ml: {name: "Plant 10 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_10_days: {name: "Plant 10 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_11_glass_ml: {name: "Plant 11 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_11_days: {name: "Plant 11 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_12_glass_ml: {name: "Plant 12 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_12_days: {name: "Plant 12 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_13_glass_ml: {name: "Plant 13 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_13_days: {name: "Plant 13 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_14_glass_ml: {name: "Plant 14 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_14_days: {name: "Plant 14 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+  plant_15_glass_ml: {name: "Plant 15 Glass", min: 10, max: 2000, step: 10, unit_of_measurement: "ml", mode: box, icon: mdi:cup-water}
+  plant_15_days: {name: "Plant 15 Days per Glass", min: 0.5, max: 60, step: 0.5, unit_of_measurement: "d", mode: box, icon: mdi:calendar-clock}
+
+input_select:
+  # Plant icons (Plant N Icon) – the icon on the reTerminal's plant cards
+  plant_1_icon:
+    name: "Plant 1 Icon"
+    options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili]
+    icon: mdi:flower
+  plant_2_icon: {name: "Plant 2 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_3_icon: {name: "Plant 3 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_4_icon: {name: "Plant 4 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_5_icon: {name: "Plant 5 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_6_icon: {name: "Plant 6 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_7_icon: {name: "Plant 7 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_8_icon: {name: "Plant 8 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_9_icon: {name: "Plant 9 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_10_icon: {name: "Plant 10 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_11_icon: {name: "Plant 11 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_12_icon: {name: "Plant 12 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_13_icon: {name: "Plant 13 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_14_icon: {name: "Plant 14 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+  plant_15_icon: {name: "Plant 15 Icon", options: [Foliage, Cactus, Succulent, Flowering, Orchid, Tulip, Grass, Palm, Herb, Tree, Chili], icon: mdi:flower}
+
+# Press to (re)load the sample plant settings (automation below)
+input_button:
+  plants_load_samples:
+    name: "Plants – load sample settings"
+    icon: mdi:sprout
+
+# Plant names (Plant N Name) – shown on the reTerminal and the DIY panel.
+# Type "-" to hide a plant you don't use. Leave it empty to use the name
+# from the reTerminal's own YAML.
+input_text:
+  plant_1_name:
+    name: "Plant 1 Name"
+    max: 24
+    icon: mdi:rename
+  plant_2_name: {name: "Plant 2 Name", max: 24, icon: mdi:rename}
+  plant_3_name: {name: "Plant 3 Name", max: 24, icon: mdi:rename}
+  plant_4_name: {name: "Plant 4 Name", max: 24, icon: mdi:rename}
+  plant_5_name: {name: "Plant 5 Name", max: 24, icon: mdi:rename}
+  plant_6_name: {name: "Plant 6 Name", max: 24, icon: mdi:rename}
+  plant_7_name: {name: "Plant 7 Name", max: 24, icon: mdi:rename}
+  plant_8_name: {name: "Plant 8 Name", max: 24, icon: mdi:rename}
+  plant_9_name: {name: "Plant 9 Name", max: 24, icon: mdi:rename}
+  plant_10_name: {name: "Plant 10 Name", max: 24, icon: mdi:rename}
+  plant_11_name: {name: "Plant 11 Name", max: 24, icon: mdi:rename}
+  plant_12_name: {name: "Plant 12 Name", max: 24, icon: mdi:rename}
+  plant_13_name: {name: "Plant 13 Name", max: 24, icon: mdi:rename}
+  plant_14_name: {name: "Plant 14 Name", max: 24, icon: mdi:rename}
+  plant_15_name: {name: "Plant 15 Name", max: 24, icon: mdi:rename}
+
+
+template:
+
+  # ───── PLANTS: which room each plant is in ─────
+  # Pick a room for each plant with the "Plant N Room" selects (any dashboard,
+  # e.g. the card in plants-card.yaml), or long-press a plant on the reTerminal.
+  # Their options are always your current Home Assistant areas. Until you pick
+  # one, a plant gets a fixed pseudo-random room that has a temperature sensor.
+  # The plant's thirst follows its room's temperature (floor average if the
+  # room has no sensor, else the house average). Plant N = plantN_name on
+  # the reTerminal.
+  - triggers:
+      - trigger: event                  # from the "Plant N Room" selects
+        event_type: panel_plant_room
+      - trigger: event                  # from the reTerminal (long-press a plant)
+        event_type: esphome.panel_plant_room
+    sensor:
+      - name: "Panel Plant Rooms"
+        unique_id: panel_plant_rooms
+        icon: mdi:sprout
+        state: >
+          {% set r = this.attributes.get('rooms', {}) %}
+          {{ (dict(r, **{trigger.event.data.plant | string: trigger.event.data.area}) if trigger.event.data.area else r) | count }}
+        attributes:
+          rooms: >
+            {% set r = this.attributes.get('rooms', {}) %}
+            {% set d = trigger.event.data %}
+            {{ dict(r, **{d.plant | string: d.area}) if d.area else r }}
+
+  - sensor:
+      # Room, floor and temperature per plant – read by the reTerminal.
+      # plants = "area_id|room|floor|temp|source;…" for plants 1…15
+      - name: "Panel Plants"
+        unique_id: panel_plants
+        icon: mdi:sprout
+        state: >
+          {% from 'panel_plants.jinja' import plant_table %}
+          {{ plant_table(state_attr('sensor.panel_rooms', 'rooms'), state_attr('sensor.panel_plant_rooms', 'rooms'))
+             .split(';') | select('search', '^[^|]+\\|') | list | count }}
+        attributes:
+          plants: >
+            {% from 'panel_plants.jinja' import plant_table %}
+            {{ plant_table(state_attr('sensor.panel_rooms', 'rooms'), state_attr('sensor.panel_plant_rooms', 'rooms')) }}
+          # name and icon per plant: "name|icon;…" (input_text / input_select helpers)
+          names: >
+            {% set ns = namespace(o=[]) %}
+            {% for n in range(1, 16) %}
+              {% set nm = states('input_text.plant_' ~ n ~ '_name') %}
+              {% set ic = states('input_select.plant_' ~ n ~ '_icon') %}
+              {% set nm = '' if nm in ['unknown', 'unavailable'] else nm | replace('|', '/') | replace(';', ',') | trim %}
+              {% set ic = '' if ic in ['unknown', 'unavailable'] else ic | lower %}
+              {% set ns.o = ns.o + [nm ~ '|' ~ ic] %}
+            {% endfor %}
+            {{ ns.o | join(';') }}
+          # every area A–Z for the reTerminal's room picker: "area_id|name|floor;…"
+          areas: >
+            {% set ns = namespace(o=[]) %}
+            {% for a in areas() %}
+              {% set f = floor_id(a) %}
+              {% set ns.o = ns.o + [{'k': area_name(a) | lower,
+                  'v': a ~ '|' ~ (area_name(a) | replace('|', '/') | replace(';', ',')) ~ '|' ~ ((floor_name(f) or '') if f else '')}] %}
+            {% endfor %}
+            {{ ns.o | sort(attribute='k') | map(attribute='v') | join(';') }}
+          rooms: >
+            {% from 'panel_plants.jinja' import plant_table %}
+            {% set t = plant_table(state_attr('sensor.panel_rooms', 'rooms'), state_attr('sensor.panel_plant_rooms', 'rooms')) %}
+            {{ t.split(';') | map('regex_replace', '^[^|]*\\|([^|]*)\\|.*$', '\\1') | list }}
+
+      # Average temperature per floor (and of the whole house as the state)
+      - name: "Panel Floor Temperatures"
+        unique_id: panel_floor_temperatures
+        icon: mdi:home-floor-0
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state: "{{ state_attr('sensor.panel_rooms', 'average') }}"
+        availability: "{{ state_attr('sensor.panel_rooms', 'average') is number }}"
+        attributes:
+          floors: >
+            {% from 'panel_plants.jinja' import floor_temps %}
+            {% set ns = namespace(d={}) %}
+            {% for x in floor_temps(state_attr('sensor.panel_rooms', 'rooms')).split(';') if x %}
+              {% set p = x.split('|') %}{% set ns.d = dict(ns.d, **{p[0]: p[1] | float}) %}
+            {% endfor %}
+            {{ ns.d }}
+
+  # The "Plant N Room" selects
+  - select:
+      - name: "Plant 1 Room"
+        unique_id: panel_plant_1_room
+        icon: mdi:sprout
+        options: &room_options "{{ areas() | map('area_name') | sort | list }}"
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[0] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 1
+              area: "{{ area_id(option) }}"
+      - name: "Plant 2 Room"
+        unique_id: panel_plant_2_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[1] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 2
+              area: "{{ area_id(option) }}"
+      - name: "Plant 3 Room"
+        unique_id: panel_plant_3_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[2] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 3
+              area: "{{ area_id(option) }}"
+      - name: "Plant 4 Room"
+        unique_id: panel_plant_4_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[3] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 4
+              area: "{{ area_id(option) }}"
+      - name: "Plant 5 Room"
+        unique_id: panel_plant_5_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[4] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 5
+              area: "{{ area_id(option) }}"
+      - name: "Plant 6 Room"
+        unique_id: panel_plant_6_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[5] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 6
+              area: "{{ area_id(option) }}"
+      - name: "Plant 7 Room"
+        unique_id: panel_plant_7_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[6] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 7
+              area: "{{ area_id(option) }}"
+      - name: "Plant 8 Room"
+        unique_id: panel_plant_8_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[7] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 8
+              area: "{{ area_id(option) }}"
+      - name: "Plant 9 Room"
+        unique_id: panel_plant_9_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[8] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 9
+              area: "{{ area_id(option) }}"
+      - name: "Plant 10 Room"
+        unique_id: panel_plant_10_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[9] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 10
+              area: "{{ area_id(option) }}"
+      - name: "Plant 11 Room"
+        unique_id: panel_plant_11_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[10] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 11
+              area: "{{ area_id(option) }}"
+      - name: "Plant 12 Room"
+        unique_id: panel_plant_12_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[11] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 12
+              area: "{{ area_id(option) }}"
+      - name: "Plant 13 Room"
+        unique_id: panel_plant_13_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[12] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 13
+              area: "{{ area_id(option) }}"
+      - name: "Plant 14 Room"
+        unique_id: panel_plant_14_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[13] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 14
+              area: "{{ area_id(option) }}"
+      - name: "Plant 15 Room"
+        unique_id: panel_plant_15_room
+        icon: mdi:sprout
+        options: *room_options
+        state: "{{ (state_attr('sensor.panel_plants', 'rooms') or [''] * 15)[14] }}"
+        select_option:
+          - event: panel_plant_room
+            event_data:
+              plant: 15
+              area: "{{ area_id(option) }}"
+
+
+# ── Automation: sample plants ───────────────────────────────────────────────
+
+automation:
+
+  # Sample names, icons, glass size and days per glass for 15 plants. At
+  # start-up it only fills helpers that were never set (empty name, glass
+  # still at the 10 ml minimum); the "Plants – load sample settings" button
+  # overwrites all of them.
+  - id: plants_load_sample_settings
+    alias: "Plants – load sample settings"
+    mode: single
+    triggers:
+      - trigger: homeassistant
+        event: start
+        id: start
+      - trigger: state
+        entity_id: input_button.plants_load_samples
+        id: button
+    actions:
+      - repeat:
+          for_each:
+            - { n: 1, glass: 300, days: 7, name: "Monstera", icon: Foliage }
+            - { n: 2, glass: 200, days: 21, name: "Snake plant", icon: Grass }
+            - { n: 3, glass: 250, days: 4, name: "Peace lily", icon: Flowering }
+            - { n: 4, glass: 100, days: 7, name: "Orchid", icon: Orchid }
+            - { n: 5, glass: 100, days: 30, name: "Cactus", icon: Cactus }
+            - { n: 6, glass: 150, days: 2, name: "Basil", icon: Herb }
+            - { n: 7, glass: 400, days: 7, name: "Fiddle fig", icon: Tree }
+            - { n: 8, glass: 200, days: 6, name: "Pothos", icon: Foliage }
+            - { n: 9, glass: 100, days: 21, name: "Aloe vera", icon: Succulent }
+            - { n: 10, glass: 200, days: 5, name: "Spider plant", icon: Grass }
+            - { n: 11, glass: 400, days: 7, name: "Kentia palm", icon: Palm }
+            - { n: 12, glass: 150, days: 14, name: "Jade plant", icon: Succulent }
+            - { n: 13, glass: 250, days: 2, name: "Chili pepper", icon: Chili }
+            - { n: 14, glass: 150, days: 3, name: "Tulips", icon: Tulip }
+            - { n: 15, glass: 200, days: 4, name: "Calathea", icon: Foliage }
+          sequence:
+            - if:
+                - condition: template
+                  value_template: >
+                    {{ trigger.id == 'button' or
+                       states('input_text.plant_' ~ repeat.item.n ~ '_name') in ['', 'unknown', 'unavailable'] }}
+              then:
+                - action: input_text.set_value
+                  target:
+                    entity_id: "input_text.plant_{{ repeat.item.n }}_name"
+                  data:
+                    value: "{{ repeat.item.name }}"
+                - action: input_select.select_option
+                  target:
+                    entity_id: "input_select.plant_{{ repeat.item.n }}_icon"
+                  data:
+                    option: "{{ repeat.item.icon }}"
+            - if:
+                - condition: template
+                  value_template: >
+                    {{ trigger.id == 'button' or
+                       states('input_number.plant_' ~ repeat.item.n ~ '_glass_ml') | float(10) <= 10 }}
+              then:
+                - action: input_number.set_value
+                  target:
+                    entity_id: "input_number.plant_{{ repeat.item.n }}_glass_ml"
+                  data:
+                    value: "{{ repeat.item.glass }}"
+                - action: input_number.set_value
+                  target:
+                    entity_id: "input_number.plant_{{ repeat.item.n }}_days"
+                  data:
+                    value: "{{ repeat.item.days }}"

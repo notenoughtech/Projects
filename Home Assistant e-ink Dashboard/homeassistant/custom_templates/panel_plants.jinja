@@ -1,0 +1,73 @@
+{#- ─────────────────────────────────────────────────────────────────────────
+    reTerminal panels – PLANTS (used by panel_plants.yaml)
+    Put this file in  <config>/custom_templates/panel_plants.jinja
+
+    Which room each plant is in, and the temperature it gets
+    Rooms are picked with the "Plant N Room" selects in Home Assistant
+    (stored in sensor.panel_plant_rooms). A plant that hasn't been given a
+    room yet gets a fixed pseudo-random one of the rooms with a sensor.
+    Temperature: its room's sensor → else the average of its floor →
+    else the average of the whole house.
+    ───────────────────────────────────────────────────────────────────────── -#}
+
+{#- one line per plant 1…15: "area_id|room name|floor name|temp|source"
+      rooms   sensor.panel_rooms' "rooms" attribute
+      saved   sensor.panel_plant_rooms' "rooms" attribute ({"1": area_id, …})
+    source = room | floor | house ('' = no temperature anywhere) -#}
+{%- macro plant_table(rooms, saved) -%}
+  {%- set ns = namespace(rt=[], fl={}, hs=0, hc=0, out=[]) -%}
+  {%- for r in ((rooms or '') | string | trim | replace('\n', '')).split(';') if r -%}
+    {%- set f = r.split('|') -%}
+    {%- if f | count > 2 and f[2] != '' -%}
+      {%- set t = f[2] | float -%}
+      {%- set ns.rt = ns.rt + [[f[0], t]] -%}
+      {%- set fid = floor_id(f[0]) or '' -%}
+      {%- if fid -%}
+        {%- set cur = ns.fl.get(fid, [0, 0]) -%}
+        {%- set ns.fl = dict(ns.fl, **{fid: [cur[0] + t, cur[1] + 1]}) -%}
+      {%- endif -%}
+      {%- set ns.hs = ns.hs + t -%}{%- set ns.hc = ns.hc + 1 -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- set rt = ns.rt | sort(attribute=0) -%}
+  {%- set all_areas = areas() -%}
+  {%- set saved = saved if saved is mapping else {} -%}
+  {%- for n in range(1, 16) -%}
+    {%- set a = saved.get(n | string, '') -%}
+    {%- if not a or a not in all_areas -%}
+      {%- set a = rt[((n - 1) * 7 + 3) % (rt | count)][0] if rt else '' -%}
+    {%- endif -%}
+    {%- set temp = namespace(v='', src='') -%}
+    {%- for x in rt if x[0] == a -%}{%- set temp.v = x[1] -%}{%- set temp.src = 'room' -%}{%- endfor -%}
+    {%- set fid = (floor_id(a) or '') if a else '' -%}
+    {%- if temp.v == '' and fid and fid in ns.fl -%}
+      {%- set temp.v = (ns.fl[fid][0] / ns.fl[fid][1]) | round(1) -%}{%- set temp.src = 'floor' -%}
+    {%- endif -%}
+    {%- if temp.v == '' and ns.hc -%}
+      {%- set temp.v = (ns.hs / ns.hc) | round(1) -%}{%- set temp.src = 'house' -%}
+    {%- endif -%}
+    {%- set name = ((area_name(a) or '') if a else '') | replace('|', '/') | replace(';', ',') -%}
+    {%- set floor = ((floor_name(fid) or '') if fid else '') | replace('|', '/') | replace(';', ',') -%}
+    {%- set ns.out = ns.out + [[a, name, floor, temp.v, temp.src] | join('|')] -%}
+  {%- endfor -%}
+  {{- ns.out | join(';') -}}
+{%- endmacro -%}
+
+{#- average temperature per floor, as "Floor name|avg;…" (from panel_rooms) -#}
+{%- macro floor_temps(rooms) -%}
+  {%- set ns = namespace(fl={}, out=[]) -%}
+  {%- for r in ((rooms or '') | string | trim | replace('\n', '')).split(';') if r -%}
+    {%- set f = r.split('|') -%}
+    {%- if f | count > 2 and f[2] != '' -%}
+      {%- set fid = floor_id(f[0]) or '' -%}
+      {%- if fid -%}
+        {%- set cur = ns.fl.get(fid, [0, 0]) -%}
+        {%- set ns.fl = dict(ns.fl, **{fid: [cur[0] + f[2] | float, cur[1] + 1]}) -%}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- for fid, v in ns.fl.items() -%}
+    {%- set ns.out = ns.out + [(floor_name(fid) or fid) ~ '|' ~ ((v[0] / v[1]) | round(1))] -%}
+  {%- endfor -%}
+  {{- ns.out | join(';') -}}
+{%- endmacro -%}

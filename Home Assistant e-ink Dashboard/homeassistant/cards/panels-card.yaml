@@ -1,0 +1,12 @@
+# DIY panel settings card for a Home Assistant dashboard
+# Dashboard → ⋮ Edit → + Add card → Manual → paste all of this.
+type: entities
+title: DIY e-ink panel
+icon: mdi:tablet
+entities:
+  - entity: input_select.diy_panel_refresh
+    name: Refresh
+  - entity: input_select.diy_panel_card_change
+    name: Rotating card changes
+  - entity: input_boolean.diy_panel_stay_awake
+    name: Stay awake (for updates)

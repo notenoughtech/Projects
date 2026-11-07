@@ -1,0 +1,234 @@
+# Plants card for a Home Assistant dashboard
+# Dashboard → ⋮ Edit → + Add card → Manual → paste all of this.
+# Per plant: name ("-" hides it), icon, room, glass size and days per glass.
+# Changes reach the reTerminal within a few seconds; the room also changes
+# when you long-press a plant on the reTerminal.
+type: vertical-stack
+cards:
+  - type: markdown
+    content: >-
+      **Plants** · name `-` hides a plant on the panels ·
+      {{ states('sensor.panel_plants') }} plants placed in rooms
+  - type: grid
+    columns: 3
+    square: false
+    cards:
+      - type: entities
+        title: Plant 1
+        state_color: false
+        entities:
+          - entity: input_text.plant_1_name
+            name: Name
+          - entity: input_select.plant_1_icon
+            name: Icon
+          - entity: select.plant_1_room
+            name: Room
+          - entity: input_number.plant_1_glass_ml
+            name: Glass
+          - entity: input_number.plant_1_days
+            name: Days per glass
+      - type: entities
+        title: Plant 2
+        state_color: false
+        entities:
+          - entity: input_text.plant_2_name
+            name: Name
+          - entity: input_select.plant_2_icon
+            name: Icon
+          - entity: select.plant_2_room
+            name: Room
+          - entity: input_number.plant_2_glass_ml
+            name: Glass
+          - entity: input_number.plant_2_days
+            name: Days per glass
+      - type: entities
+        title: Plant 3
+        state_color: false
+        entities:
+          - entity: input_text.plant_3_name
+            name: Name
+          - entity: input_select.plant_3_icon
+            name: Icon
+          - entity: select.plant_3_room
+            name: Room
+          - entity: input_number.plant_3_glass_ml
+            name: Glass
+          - entity: input_number.plant_3_days
+            name: Days per glass
+      - type: entities
+        title: Plant 4
+        state_color: false
+        entities:
+          - entity: input_text.plant_4_name
+            name: Name
+          - entity: input_select.plant_4_icon
+            name: Icon
+          - entity: select.plant_4_room
+            name: Room
+          - entity: input_number.plant_4_glass_ml
+            name: Glass
+          - entity: input_number.plant_4_days
+            name: Days per glass
+      - type: entities
+        title: Plant 5
+        state_color: false
+        entities:
+          - entity: input_text.plant_5_name
+            name: Name
+          - entity: input_select.plant_5_icon
+            name: Icon
+          - entity: select.plant_5_room
+            name: Room
+          - entity: input_number.plant_5_glass_ml
+            name: Glass
+          - entity: input_number.plant_5_days
+            name: Days per glass
+      - type: entities
+        title: Plant 6
+        state_color: false
+        entities:
+          - entity: input_text.plant_6_name
+            name: Name
+          - entity: input_select.plant_6_icon
+            name: Icon
+          - entity: select.plant_6_room
+            name: Room
+          - entity: input_number.plant_6_glass_ml
+            name: Glass
+          - entity: input_number.plant_6_days
+            name: Days per glass
+      - type: entities
+        title: Plant 7
+        state_color: false
+        entities:
+          - entity: input_text.plant_7_name
+            name: Name
+          - entity: input_select.plant_7_icon
+            name: Icon
+          - entity: select.plant_7_room
+            name: Room
+          - entity: input_number.plant_7_glass_ml
+            name: Glass
+          - entity: input_number.plant_7_days
+            name: Days per glass
+      - type: entities
+        title: Plant 8
+        state_color: false
+        entities:
+          - entity: input_text.plant_8_name
+            name: Name
+          - entity: input_select.plant_8_icon
+            name: Icon
+          - entity: select.plant_8_room
+            name: Room
+          - entity: input_number.plant_8_glass_ml
+            name: Glass
+          - entity: input_number.plant_8_days
+            name: Days per glass
+      - type: entities
+        title: Plant 9
+        state_color: false
+        entities:
+          - entity: input_text.plant_9_name
+            name: Name
+          - entity: input_select.plant_9_icon
+            name: Icon
+          - entity: select.plant_9_room
+            name: Room
+          - entity: input_number.plant_9_glass_ml
+            name: Glass
+          - entity: input_number.plant_9_days
+            name: Days per glass
+      - type: entities
+        title: Plant 10
+        state_color: false
+        entities:
+          - entity: input_text.plant_10_name
+            name: Name
+          - entity: input_select.plant_10_icon
+            name: Icon
+          - entity: select.plant_10_room
+            name: Room
+          - entity: input_number.plant_10_glass_ml
+            name: Glass
+          - entity: input_number.plant_10_days
+            name: Days per glass
+      - type: entities
+        title: Plant 11
+        state_color: false
+        entities:
+          - entity: input_text.plant_11_name
+            name: Name
+          - entity: input_select.plant_11_icon
+            name: Icon
+          - entity: select.plant_11_room
+            name: Room
+          - entity: input_number.plant_11_glass_ml
+            name: Glass
+          - entity: input_number.plant_11_days
+            name: Days per glass
+      - type: entities
+        title: Plant 12
+        state_color: false
+        entities:
+          - entity: input_text.plant_12_name
+            name: Name
+          - entity: input_select.plant_12_icon
+            name: Icon
+          - entity: select.plant_12_room
+            name: Room
+          - entity: input_number.plant_12_glass_ml
+            name: Glass
+          - entity: input_number.plant_12_days
+            name: Days per glass
+      - type: entities
+        title: Plant 13
+        state_color: false
+        entities:
+          - entity: input_text.plant_13_name
+            name: Name
+          - entity: input_select.plant_13_icon
+            name: Icon
+          - entity: select.plant_13_room
+            name: Room
+          - entity: input_number.plant_13_glass_ml
+            name: Glass
+          - entity: input_number.plant_13_days
+            name: Days per glass
+      - type: entities
+        title: Plant 14
+        state_color: false
+        entities:
+          - entity: input_text.plant_14_name
+            name: Name
+          - entity: input_select.plant_14_icon
+            name: Icon
+          - entity: select.plant_14_room
+            name: Room
+          - entity: input_number.plant_14_glass_ml
+            name: Glass
+          - entity: input_number.plant_14_days
+            name: Days per glass
+      - type: entities
+        title: Plant 15
+        state_color: false
+        entities:
+          - entity: input_text.plant_15_name
+            name: Name
+          - entity: input_select.plant_15_icon
+            name: Icon
+          - entity: select.plant_15_room
+            name: Room
+          - entity: input_number.plant_15_glass_ml
+            name: Glass
+          - entity: input_number.plant_15_days
+            name: Days per glass
+  - type: entities
+    title: All plants
+    entities:
+      - entity: input_number.plant_water_multiplier
+        name: Water multiplier
+      - entity: sensor.panel_floor_temperatures
+        name: House average
+      - entity: input_button.plants_load_samples
+        name: Load sample plants (overwrites all)

@@ -1,0 +1,196 @@
+{#- ─────────────────────────────────────────────────────────────────────────
+    reTerminal panels – ROOMS (used by packages/panel_core.yaml)
+    Put this file in  <config>/custom_templates/panel_rooms.jinja
+    (after changing it: Developer tools → YAML → reload "Custom Jinja2 templates")
+
+    Used by the "Panel Rooms" sensor.
+
+    Every area with a temperature sensor becomes a room. Humidity, CO2,
+    PM2.5, VOC and illuminance sensors in the same area are added to its card.
+      label "panel_ignore" on a sensor → never used
+      label "panel_sensor" on a sensor → preferred when an area has several
+    Internal temperatures of electronics (chip, CPU, printer, NAS, water
+    meter …) are skipped automatically.
+    ───────────────────────────────────────────────────────────────────────── -#}
+
+{#- first entity with one of the device classes (a "panel_sensor" label wins) -#}
+{%- macro _pick(ents, classes, prefer) -%}
+  {%- set ns = namespace(c=[]) -%}
+  {%- for dc in classes -%}
+    {%- if not ns.c -%}{%- set ns.c = ents | select('is_state_attr', 'device_class', dc) | list -%}{%- endif -%}
+  {%- endfor -%}
+  {%- set cp = ns.c | select('in', prefer) | list -%}
+  {%- set cv = (cp if cp else ns.c) | select('has_value') | list -%}
+  {{- cv[0] if cv else ('none' if ns.c else '') -}}
+{%- endmacro -%}
+
+{#- the room's temperature sensor: label wins; electronics skipped; a believable
+    room value (5–35 °C) preferred. '' = no sensor, 'none' = sensor offline -#}
+{%- macro _pickt(ents, prefer) -%}
+  {%- set bad = "(^|[ ._'-])(chip|cpu|core|gpu|soc|internal|processor|mainboard|motherboard|esp32|esp8266|battery|nozzle|hotend|hot end|bed|extruder|printer|nas|disk|ssd|hdd|nvme|system|router|switch|ups|inverter|heatsink|boiler|flow|return|outdoor|outside|freezer|fridge|water heater|tank|water|meter|pipe)([ ._'-]|$)" -%}
+  {%- set c = ents | select('is_state_attr', 'device_class', 'temperature') | list -%}
+  {%- set cp = c | select('in', prefer) | select('has_value') | list -%}
+  {%- set t = namespace(ok=[], live=[], fit=[]) -%}
+  {%- for e in c if e not in prefer -%}
+    {%- set label = (e ~ ' ' ~ (state_attr(e, 'friendly_name') or '')) | lower -%}
+    {%- if not (label is search(bad)) -%}
+      {%- set t.ok = t.ok + [e] -%}
+      {%- set v = states(e) | float(none) -%}
+      {%- if v is not none -%}{%- set t.live = t.live + [e] -%}{%- endif -%}
+      {%- if v is not none and 5 <= v <= 35 -%}{%- set t.fit = t.fit + [e] -%}{%- endif -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{- cp[0] if cp else t.fit[0] if t.fit else t.live[0] if t.live else ('none' if t.ok or (c | select('in', prefer) | list) else '') -}}
+{%- endmacro -%}
+
+{%- macro _val(e, prec) -%}
+  {%- if e and e != 'none' -%}{%- set v = states(e) | float(0) -%}{{- (v | round(prec)) if prec else (v | round(0) | int) -}}{%- endif -%}
+{%- endmacro -%}
+
+{#- all rooms, pinned first (in pin order), then A–Z:
+    "area_id|name|temp|hum|co2|pm25|voc|voc_unit|lux|target|pinned;…" -#}
+{%- macro panel_rows() -%}
+  {%- set st = 'sensor.panel_heating_state' -%}
+  {%- set pins = state_attr(st, 'pinned') or [] -%}
+  {%- set tg = state_attr(st, 'targets') or {} -%}
+  {%- set ignore = label_entities('panel_ignore') -%}
+  {%- set prefer = label_entities('panel_sensor') -%}
+  {%- set ns = namespace(rows=[]) -%}
+  {%- for a in areas() -%}
+    {%- set ents = (area_entities(a) + (area_devices(a) | map('device_entities') | sum(start=[])))
+                   | unique | select('match', 'sensor\.') | reject('in', ignore) | list -%}
+    {%- set te = _pickt(ents, prefer) -%}
+    {%- if te -%}
+      {%- set name = area_name(a) | replace('|', '/') | replace(';', ',') -%}
+      {%- set temp = states(te) | float(none) if te != 'none' else none -%}
+      {%- set he = _pick(ents, ['humidity'], prefer) -%}
+      {%- set ce = _pick(ents, ['carbon_dioxide'], prefer) -%}
+      {%- set pe = _pick(ents, ['pm25'], prefer) -%}
+      {%- set ve = _pick(ents, ['volatile_organic_compounds_parts', 'volatile_organic_compounds'], prefer) -%}
+      {%- set le = _pick(ents, ['illuminance'], prefer) -%}
+      {%- set vu = (state_attr(ve, 'unit_of_measurement') or '') | replace('µ', 'u') if ve and ve != 'none' else '' -%}
+      {%- set pi = namespace(i=-1) -%}
+      {%- for p in pins -%}{%- if p == a -%}{%- set pi.i = loop.index0 -%}{%- endif -%}{%- endfor -%}
+      {%- set key = ('0%02d' % pi.i) if pi.i >= 0 else ('1' ~ name | lower) -%}
+      {%- set row = [a, name, (temp | round(1)) if temp is not none else '', _val(he, 0), _val(ce, 0), _val(pe, 0),
+                     _val(ve, 1 if vu == 'ppm' else 0), vu, _val(le, 0),
+                     (tg[a] | float(0) | round(1)) if a in tg else '', '1' if pi.i >= 0 else ''] | join('|') -%}
+      {%- set ns.rows = ns.rows + [[key, row]] -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{- ns.rows | sort(attribute=0) | map(attribute=1) | join(';') -}}
+{%- endmacro -%}
+
+{#- one figure about the rooms:
+    count | offline_count | offline | average | coldest_room | coldest_temp |
+    warmest_room | warmest_temp | lead_temp -#}
+{%- macro panel_stat(kind) -%}
+  {%- set lead = state_attr('sensor.panel_heating_state', 'lead') or '' -%}
+  {%- set ns = namespace(t=[], off=[], lead_t=none) -%}
+  {%- for r in panel_rows().split(';') if r -%}
+    {%- set f = r.split('|') -%}
+    {%- if f[2] == '' -%}{%- set ns.off = ns.off + [f[1]] -%}
+    {%- else -%}{%- set ns.t = ns.t + [[f[2] | float, f[1]]] -%}{%- endif -%}
+    {%- if f[0] == lead and f[2] != '' -%}{%- set ns.lead_t = f[2] | float -%}{%- endif -%}
+  {%- endfor -%}
+  {%- if kind == 'count' -%}{{- ns.t | count + ns.off | count -}}
+  {%- elif kind == 'offline_count' -%}{{- ns.off | count -}}
+  {%- elif kind == 'offline' -%}{{- ns.off | join(', ') -}}
+  {%- elif kind == 'average' -%}{{- (ns.t | map(attribute=0) | sum / ns.t | count) | round(1) if ns.t else none -}}
+  {%- elif kind == 'coldest_room' -%}{{- (ns.t | sort(attribute=0) | first)[1] if ns.t else '' -}}
+  {%- elif kind == 'coldest_temp' -%}{{- (ns.t | sort(attribute=0) | first)[0] if ns.t else none -}}
+  {%- elif kind == 'warmest_room' -%}{{- (ns.t | sort(attribute=0) | last)[1] if ns.t else '' -}}
+  {%- elif kind == 'warmest_temp' -%}{{- (ns.t | sort(attribute=0) | last)[0] if ns.t else none -}}
+  {%- elif kind == 'lead_temp' -%}{{- ns.lead_t -}}
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- ───────────────────────── LIGHTS page (packages/panel_lights.yaml) ─────────────────────────
+    A room (area) shows on the reTerminal's Lights page when it has a light or a
+    "panel_device". Give entities these labels in Home Assistant (entity → ⚙ → Labels):
+      panel_main_light   the room's main light   (none: a light group in the room, else its first light)
+      panel_mood_light   the room's mood light   (lamp, LED strip …)
+      panel_device       up to 3 more things to switch (fan, socket, TV …), A–Z
+    The entity's area decides the room (its own area, or its device's).
+    One room per row, pinned rooms first:
+      "area|name|temp|hum|lux|motion|pinned|main|main_on|mood|mood_on|main_bri|mood_bri|dev|name|domain|on|dev|…;…"
+    on: 1 on · 0 off · - unavailable
+    bri: brightness % (0 when off), empty when the light can't dim -#}
+{%- macro _on(e) -%}
+  {%- set s = states(e) -%}
+  {{- '' if not e else '1' if s in ['on', 'open', 'playing', 'home', 'heat', 'cool', 'auto'] else '-' if s in ['unavailable', 'unknown'] else '0' -}}
+{%- endmacro -%}
+
+{%- macro _bri(e) -%}
+  {%- if e and e.startswith('light.') -%}
+    {%- set modes = state_attr(e, 'supported_color_modes') or [] -%}
+    {%- if modes | reject('eq', 'onoff') | list | count > 0 -%}
+      {{- ((state_attr(e, 'brightness') or 0) / 2.55) | round(0) | int if is_state(e, 'on') else 0 -}}
+    {%- endif -%}
+  {%- endif -%}
+{%- endmacro -%}
+
+{%- macro light_rows() -%}
+  {%- set pins = state_attr('sensor.panel_lights_state', 'pinned') or [] -%}
+  {%- set lmain = label_entities('panel_main_light') -%}
+  {%- set lmood = label_entities('panel_mood_light') -%}
+  {%- set ldev = label_entities('panel_device') -%}
+  {%- set ignore = label_entities('panel_ignore') -%}
+  {%- set prefer = label_entities('panel_sensor') -%}
+  {%- set ns = namespace(rows=[]) -%}
+  {%- for a in areas() -%}
+    {%- set ents = (area_entities(a) + (area_devices(a) | map('device_entities') | sum(start=[])))
+                   | unique | reject('in', ignore) | list -%}
+    {%- set lights = ents | select('match', 'light\.') | sort | list -%}
+    {%- set mood = ents | select('in', lmood) | list -%}
+    {%- set main = ents | select('in', lmain) | list -%}
+    {%- if not main -%}
+      {%- set free = lights | reject('in', mood) | reject('in', ldev) | list -%}
+      {%- set grp = namespace(g=[]) -%}
+      {%- for e in free if state_attr(e, 'entity_id') is iterable and state_attr(e, 'entity_id') is not string -%}
+        {%- set grp.g = grp.g + [e] -%}
+      {%- endfor -%}
+      {%- set main = grp.g if grp.g else free -%}
+    {%- endif -%}
+    {%- set me = main[0] if main else '' -%}
+    {%- set mo = mood[0] if mood else '' -%}
+    {%- set devs = (ents | select('in', ldev) | reject('eq', me) | reject('eq', mo) | sort | list)[:3] -%}
+    {%- if me or mo or devs -%}
+      {%- set sens = ents | select('match', 'sensor\.') | list -%}
+      {%- set te = _pickt(sens, prefer) -%}
+      {%- set he = _pick(sens, ['humidity'], prefer) -%}
+      {%- set le = _pick(sens, ['illuminance'], prefer) -%}
+      {%- set mot = ents | select('match', 'binary_sensor\.') | list -%}
+      {%- set mot = (mot | select('is_state_attr', 'device_class', 'motion') | list)
+                    + (mot | select('is_state_attr', 'device_class', 'occupancy') | list)
+                    + (mot | select('is_state_attr', 'device_class', 'presence') | list) -%}
+      {%- set name = area_name(a) | replace('|', '/') | replace(';', ',') -%}
+      {%- set temp = states(te) | float(none) if te and te != 'none' else none -%}
+      {%- set pi = namespace(i=-1) -%}
+      {%- for p in pins -%}{%- if p == a -%}{%- set pi.i = loop.index0 -%}{%- endif -%}{%- endfor -%}
+      {%- set key = ('0%02d' % pi.i) if pi.i >= 0 else ('1' ~ name | lower) -%}
+      {%- set f = [a, name, (temp | round(1)) if temp is not none else '', _val(he, 0), _val(le, 0),
+                   ('1' if mot | select('is_state', 'on') | list else '0') if mot else '',
+                   '1' if pi.i >= 0 else '', me, _on(me), mo, _on(mo), _bri(me), _bri(mo)] -%}
+      {%- set dn = namespace(f=f) -%}
+      {%- for d in devs -%}
+        {%- set fn = (state_attr(d, 'friendly_name') or d) | replace('|', '/') | replace(';', ',') -%}
+        {%- set short = fn | replace(area_name(a), '') | trim -%}
+        {%- set dn.f = dn.f + [d, short if short | length > 1 else fn, d.split('.')[0], _on(d)] -%}
+      {%- endfor -%}
+      {%- set ns.rows = ns.rows + [[key, dn.f | join('|')]] -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{- ns.rows | sort(attribute=0) | map(attribute=1) | join(';') -}}
+{%- endmacro -%}
+
+{#- every main + mood light on the Lights page (for "All lights" when no entity is set) -#}
+{%- macro light_list(which='all') -%}
+  {%- set ns = namespace(e=[]) -%}
+  {%- for r in light_rows().split(';') if r -%}
+    {%- set f = r.split('|') -%}
+    {%- if f[7] -%}{%- set ns.e = ns.e + [f[7]] -%}{%- endif -%}
+    {%- if which == 'all' and f[9] -%}{%- set ns.e = ns.e + [f[9]] -%}{%- endif -%}
+  {%- endfor -%}
+  {{- ns.e | join(',') -}}
+{%- endmacro -%}

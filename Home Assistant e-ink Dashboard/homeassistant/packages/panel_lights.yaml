@@ -1,0 +1,116 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  reTerminal panels – LIGHTS (the Lights page)
+#
+#  One card per room: main light, mood light, up to 3 more devices, the room's
+#  temperature / humidity / light level / motion, and an "All lights" switch.
+#  Switches work both ways: tap on the panel, or change them anywhere else –
+#  the panel follows.
+#
+#  Which devices go where – labels, set in Home Assistant's UI
+#  (Settings → Entities → the entity → ⚙ → Labels):
+#    panel_main_light   the room's main light
+#                       (not set: a light group in the room, else its first light)
+#    panel_mood_light   the room's mood light (lamp, LED strip …)
+#    panel_device       up to 3 more things per room (fan, socket, TV, …)
+#  The room is the entity's area (or its device's area). Rooms with no light and
+#  no panel_device don't get a card. Create the three labels once
+#  (Settings → Areas, labels & zones → Labels) and tag away.
+#
+#  Needs:  panel_core.yaml, custom_templates/panel_rooms.jinja
+#  The reTerminal needs "Allow the device to perform Home Assistant actions".
+#  To turn this feature off: delete this file, or rename it so it no
+#  longer ends in .yaml (e.g. panel_lights.yaml.off), and restart Home Assistant.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── YOUR SETTINGS ──────────────────────────────────────────────────────────
+homeassistant:
+  customize:
+    sensor.panel_lights_settings:
+      # The "All lights" switch: a light group, switch, input_boolean … that
+      # turns everything on / off. Leave "" to use every main + mood light on
+      # the Lights page (on = the main lights, off = all of them).
+      all_lights: ""
+
+template:
+  - sensor:
+      - name: "Panel Lights Settings"            # YOUR SETTINGS above, as attributes
+        unique_id: panel_lights_settings
+        icon: mdi:cog
+        state: "ok"
+
+  # ───── Pinned rooms (first on the Lights page), set from the reTerminal ─────
+  # event "esphome.panel_lights" {action: pin, area: <area_id>} → pin / unpin (max 6)
+  - triggers:
+      - trigger: event
+        event_type: esphome.panel_lights
+        event_data:
+          action: pin
+    sensor:
+      - name: "Panel Lights State"
+        unique_id: panel_lights_state
+        icon: mdi:pin
+        state: "{{ (this.attributes.get('pinned', []) | count) }}"
+        attributes:
+          pinned: >
+            {% set d = trigger.event.data %}
+            {% set p = this.attributes.get('pinned', []) %}
+            {% if d.area in p %}{{ p | reject('eq', d.area) | list }}
+            {% elif p | count < 6 %}{{ p + [d.area] }}
+            {% else %}{{ p }}{% endif %}
+
+  # ───── What the Lights page shows; follows every light / device as it changes ─────
+  - sensor:
+      - name: "Panel Lights"
+        unique_id: panel_lights
+        icon: mdi:lightbulb-group
+        state: >
+          {% from 'panel_rooms.jinja' import light_rows %}
+          {{ light_rows().split(';') | select | list | count }}
+        attributes:
+          rows: "{% from 'panel_rooms.jinja' import light_rows %}{{ light_rows() }}"
+          all_on: >
+            {% set e = state_attr('sensor.panel_lights_settings', 'all_lights') or '' %}
+            {% if e %}{{ '1' if is_state(e, 'on') else '-' if states(e) in ['unknown', 'unavailable'] else '0' }}
+            {% else %}
+              {% from 'panel_rooms.jinja' import light_list %}
+              {{ '1' if light_list().split(',') | select | select('is_state', 'on') | list else '0' }}
+            {% endif %}
+
+automation:
+  # ───── Switches tapped on the reTerminal ─────
+  #   {action: set, entity: light.x, state: on|off}   → that entity
+  #   {action: bri, entity: light.x, state: 30|50|100} → that light on at that brightness
+  #   {action: all, state: on|off}                    → the "All lights" switch
+  - alias: "Panel – switch lights and devices"
+    id: panel_lights_switch
+    mode: queued
+    triggers:
+      - trigger: event
+        event_type: esphome.panel_lights
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.event.data.action in ['set', 'all', 'bri'] }}"
+    actions:
+      - if:
+          - condition: template
+            value_template: "{{ trigger.event.data.action == 'bri' }}"
+        then:
+          - action: light.turn_on
+            target:
+              entity_id: "{{ trigger.event.data.entity }}"
+            data:
+              brightness_pct: "{{ [[trigger.event.data.state | int(100), 1] | max, 100] | min }}"
+          - stop: "brightness set"
+      - variables:
+          d: "{{ trigger.event.data }}"
+          all_e: "{{ state_attr('sensor.panel_lights_settings', 'all_lights') or '' }}"
+          targets: >
+            {% from 'panel_rooms.jinja' import light_list %}
+            {% if d.action == 'set' %}{{ [d.entity] }}
+            {% elif all_e %}{{ [all_e] }}
+            {% else %}{{ light_list('main' if d.state == 'on' else 'all').split(',') | select | list }}{% endif %}
+      - condition: template
+        value_template: "{{ targets | count > 0 }}"
+      - action: "homeassistant.turn_{{ 'on' if d.state == 'on' else 'off' }}"
+        target:
+          entity_id: "{{ targets }}"

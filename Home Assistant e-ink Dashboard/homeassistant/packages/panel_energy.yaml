@@ -1,0 +1,344 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  reTerminal panels – ENERGY (grid)
+#
+#  Grid import / export, prices, 30-day / 12-month history and the power
+#  chart (last 20 h). Without it the panels drop their power cards.
+#  Solar lives in panel_solar.yaml – this file picks it up when it's there.
+#
+#  Needs:  panel_core.yaml, custom_templates/panel_stats.jinja
+#  To turn this feature off: delete this file, or rename it so it no
+#  longer ends in .yaml (e.g. panel_x.yaml.off), and restart Home Assistant.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── YOUR SETTINGS ──────────────────────────────────────────────────────────
+homeassistant:
+  customize:
+    sensor.panel_energy_settings:
+      # Live grid power in W: positive = importing, negative = exporting
+      grid_power:     &grid_power      sensor.grid_power
+      # Imported / exported energy (kWh, running totals). This file makes them
+      # from grid_power (see "Grid Import / Export Energy" below); point these
+      # at your own meter's sensors instead if you have them.
+      grid_import_energy: &grid_import_energy sensor.grid_import_energy
+      grid_export_energy: &grid_export_energy sensor.grid_export_energy
+
+input_number:
+
+  # ── Electricity tariff ──────────────────────────────────────────────────
+  energy_price:
+    name: "Energy Price"
+    min: 0
+    max: 1
+    step: 0.001
+    unit_of_measurement: "£/kWh"
+    mode: box
+    icon: mdi:cash
+  energy_standing_charge:
+    name: "Energy Standing Charge"
+    min: 0
+    max: 1
+    step: 0.001
+    unit_of_measurement: "£/day"
+    mode: box
+    icon: mdi:cash-multiple
+
+  # ── This week, kWh per weekday (filled by "Panels – weekly energy" below).
+  # The panels now read this week from the Panel Energy Daily sensor; these
+  # helpers stay for your own dashboards.
+  # Days still to come this week hold last week's figure.
+  grid_energy_monday:
+    name: "Grid Energy Monday"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "kWh"
+    mode: box
+  grid_energy_tuesday: {name: "Grid Energy Tuesday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  grid_energy_wednesday: {name: "Grid Energy Wednesday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  grid_energy_thursday: {name: "Grid Energy Thursday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  grid_energy_friday: {name: "Grid Energy Friday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  grid_energy_saturday: {name: "Grid Energy Saturday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  grid_energy_sunday: {name: "Grid Energy Sunday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  solar_energy_monday: {name: "Solar Energy Monday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  solar_energy_tuesday: {name: "Solar Energy Tuesday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  solar_energy_wednesday: {name: "Solar Energy Wednesday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  solar_energy_thursday: {name: "Solar Energy Thursday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  solar_energy_friday: {name: "Solar Energy Friday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  solar_energy_saturday: {name: "Solar Energy Saturday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+  solar_energy_sunday: {name: "Solar Energy Sunday", min: 0, max: 100, step: 0.1, unit_of_measurement: "kWh", mode: box}
+
+template:
+  - sensor:
+      - name: "Panel Energy Settings"            # YOUR SETTINGS above, as attributes
+        unique_id: panel_energy_settings
+        icon: mdi:cog
+        state: "ok"
+
+  # ───── Grid import / export power, split from grid_power ─────
+  - triggers:
+      - trigger: state
+        entity_id: *grid_power
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+    variables:
+      grid: *grid_power
+    sensor:
+      - name: "Grid Import Power"
+        unique_id: grid_import_power
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        state: "{{ [states(grid) | float(0), 0] | max }}"
+      - name: "Grid Export Power"
+        unique_id: grid_export_power
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+        state: "{{ [0 - states(grid) | float(0), 0] | max }}"
+
+  # ───── Monthly figures (from the utility meters further down) ─────
+  - sensor:
+      - name: "Monthly Grid Energy"
+        unit_of_measurement: "kWh"
+        state: "{{ states('sensor.grid_energy_monthly') | float(0) }}"
+      - name: "Monthly Grid Cost"
+        unit_of_measurement: "£"
+        state: >
+          {% set tariff = states('input_number.energy_price') | float(0) %}
+          {% set standing = states('input_number.energy_standing_charge') | float(0) %}
+          {% set energy = states('sensor.grid_energy_monthly') | float(0) %}
+          {{ (energy * tariff + now().day * standing) | round(2) }}
+
+  # ───── Lifetime totals (for your own dashboards) ─────
+  - triggers:
+      - trigger: state
+        entity_id: sensor.grid_import_energy
+      - trigger: homeassistant
+        event: start
+    sensor:
+      - name: "Total Energy Import Lifetime"
+        unit_of_measurement: "kWh"
+        state: "{{ states('sensor.grid_import_energy') | float(0) }}"
+
+  # ───── Highest grid import this month (resets on the 1st) ─────
+  - triggers:
+      - trigger: state
+        entity_id: sensor.grid_import_power
+      - trigger: time
+        at: "00:00:00"
+    sensor:
+      - name: "Peak Grid Power Monthly"
+        unique_id: peak_grid_power_monthly
+        unit_of_measurement: "W"
+        device_class: power
+        state: >
+          {% set cur = states('sensor.grid_import_power') | float(0) %}
+          {% set prev = this.state | float(0) if this.state not in ['unknown', 'unavailable'] else 0 %}
+          {{ cur if trigger.platform == 'time' and now().day == 1 else [prev, cur] | max }}
+
+  # ───── Energy history for the Energy page: 30 days + 12 months (kWh) ─────
+  # From Home Assistant's long-term statistics (same as the Energy dashboard).
+  # Attributes imp / sol / exp: one value per day / month, oldest first;
+  # lbl: day of the month / month number.
+  - triggers: &stats_triggers
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: event                       # green button on the reTerminal
+        event_type: esphome.panel_refresh
+    variables:
+      imp: *grid_import_energy
+      exp: *grid_export_energy
+      sol: "{{ state_attr('sensor.panel_solar_settings', 'solar_energy') or '' }}"                 # panel_solar.yaml (none: '')
+    actions:
+      - action: recorder.get_statistics
+        data:
+          # only the sensors that exist – one missing id would sink the whole request
+          statistic_ids: >
+            {% set ns = namespace(o=[]) %}
+            {% for x in [imp, exp, sol] if x and (states(x) not in ['unknown', 'unavailable'] or state_attr(x, 'state_class')) %}
+              {% set ns.o = ns.o + [x] %}
+            {% endfor %}
+            {{ ns.o }}
+          start_time: "{{ (today_at() - timedelta(days=29)).isoformat() }}"
+          period: day
+          types: [change]
+          units:
+            energy: kWh
+        response_variable: daily
+        continue_on_error: true
+      - action: recorder.get_statistics
+        data:
+          # only the sensors that exist – one missing id would sink the whole request
+          statistic_ids: >
+            {% set ns = namespace(o=[]) %}
+            {% for x in [imp, exp, sol] if x and (states(x) not in ['unknown', 'unavailable'] or state_attr(x, 'state_class')) %}
+              {% set ns.o = ns.o + [x] %}
+            {% endfor %}
+            {{ ns.o }}
+          start_time: >
+            {% set m = now().month - 11 %}{% set y = now().year - (1 if m <= 0 else 0) %}
+            {{ today_at().replace(year=y, month=(m + 12 if m <= 0 else m), day=1).isoformat() }}
+          period: month
+          types: [change]
+          units:
+            energy: kWh
+        response_variable: monthly
+        continue_on_error: true
+    sensor:
+      - name: "Panel Energy Daily"
+        unique_id: panel_energy_daily
+        icon: mdi:chart-bar
+        unit_of_measurement: "kWh"
+        state: "{% from 'panel_stats.jinja' import total %}{{ total(daily, imp) }}"
+        attributes:
+          imp: "{% from 'panel_stats.jinja' import series %}{{ series(daily, [imp, sol, exp], imp, 'day', 30, '%.1f') }}"
+          sol: "{% from 'panel_stats.jinja' import series %}{{ series(daily, [imp, sol, exp], sol, 'day', 30, '%.1f') }}"
+          exp: "{% from 'panel_stats.jinja' import series %}{{ series(daily, [imp, sol, exp], exp, 'day', 30, '%.1f') }}"
+          lbl: "{% from 'panel_stats.jinja' import series %}{{ series(daily, [imp, sol, exp], 'lbl', 'day', 30) }}"
+          # which statistics were found (for checking in Developer tools → States)
+          found: "{{ (daily or {}).get('statistics', {}).keys() | list }}"
+          # the last 7 days, oldest first, today last
+          last7_imp: "{% from 'panel_stats.jinja' import last7 %}{{ last7(daily, imp, '%.2f') }}"
+          last7_sol: "{% from 'panel_stats.jinja' import last7 %}{{ last7(daily, sol, '%.2f') }}"
+          # ── TEMPORARY diagnostics (remove once the 7-day power bars work) ──
+          dbg_rows: "{{ ((daily or {}).get('statistics', {}).get(imp, []))[-2:] }}"
+          dbg_start: >
+            {% set rows = (daily or {}).get('statistics', {}).get(imp, []) %}
+            {% if rows %}{% set e = rows[-1] %}{{ e.start }} | {{ as_datetime(e.start) }} | {{ as_local(as_datetime(e.start)) }} | {{ as_local(as_datetime(e.start)).date() | string }}{% else %}no rows{% endif %}
+          dbg_today: "{{ today_at().date() | string }}"
+          dbg_last7_inline: >
+            {% set ns = namespace(v={}) %}
+            {% for e in (daily or {}).get('statistics', {}).get(imp, []) %}
+              {% set ns.v = dict(ns.v, **{as_local(as_datetime(e.start)).date() | string: [e.change | float(0), 0] | max}) %}
+            {% endfor %}
+            {% set out = namespace(o=[]) %}
+            {% for i in range(7) %}
+              {% set out.o = out.o + ['%.2f' % ns.v.get((today_at() - timedelta(days=6 - i)).date() | string, 0)] %}
+            {% endfor %}
+            {{ out.o | join(' ') }}
+      - name: "Panel Energy Monthly"
+        unique_id: panel_energy_monthly
+        icon: mdi:chart-bar
+        unit_of_measurement: "kWh"
+        state: "{% from 'panel_stats.jinja' import total %}{{ total(monthly, imp) }}"
+        attributes:
+          imp: "{% from 'panel_stats.jinja' import series %}{{ series(monthly, [imp, sol, exp], imp, 'month', 12, '%.0f') }}"
+          sol: "{% from 'panel_stats.jinja' import series %}{{ series(monthly, [imp, sol, exp], sol, 'month', 12, '%.0f') }}"
+          exp: "{% from 'panel_stats.jinja' import series %}{{ series(monthly, [imp, sol, exp], exp, 'month', 12, '%.0f') }}"
+          lbl: "{% from 'panel_stats.jinja' import series %}{{ series(monthly, [imp, sol, exp], 'lbl', 'month', 12) }}"
+
+  # ───── Last 20 hours of power for the power chart (survives reboots) ─────
+  # 120 ten-minute averages, oldest first, from the 5-minute statistics.
+  # Attributes grid (W, + import), solar (W), forecast (W); '' = no data.
+  # (The chart adds the next 4 hours from sensor.panel_solar_forecast.)
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: event
+        event_type: esphome.panel_refresh
+    variables:
+      grid: *grid_power
+      solar: "{{ state_attr('sensor.panel_solar_settings', 'solar_power') or '' }}"
+      forecast: "{{ state_attr('sensor.panel_solar_settings', 'solar_forecast') or '' }}"
+      t0: "{{ (as_timestamp(now()) // 600 * 600) | int }}"
+    actions:
+      - action: recorder.get_statistics
+        data:
+          statistic_ids: >
+            {% set ns = namespace(o=[]) %}
+            {% for x in [grid, solar, forecast] if x and (states(x) not in ['unknown', 'unavailable'] or state_attr(x, 'state_class')) %}
+              {% set ns.o = ns.o + [x] %}
+            {% endfor %}
+            {{ ns.o }}
+          start_time: "{{ (t0 - 119 * 600) | timestamp_utc }}"
+          period: 5minute
+          types: [mean]
+        response_variable: power
+        continue_on_error: true
+    sensor:
+      - name: "Panel Power 12h"
+        unique_id: panel_power_12h
+        icon: mdi:chart-line
+        state: >
+          {% from 'panel_stats.jinja' import slots %}
+          {{ (slots(power, grid, t0, none, 120).split(',') | reject('eq', '') | list | count)
+             + (slots(power, solar, t0, 0, 120).split(',') | reject('eq', '') | list | count) }}
+        attributes:
+          grid: "{% from 'panel_stats.jinja' import slots %}{{ slots(power, grid, t0, none, 120) }}"
+          solar: "{% from 'panel_stats.jinja' import slots %}{{ slots(power, solar, t0, 0, 120) }}"
+          forecast: "{% from 'panel_stats.jinja' import slots %}{{ slots(power, forecast, t0, none, 120) }}"
+
+
+# ── Grid import / export energy (kWh) from the split power sensors above ────
+
+sensor:
+  - platform: integration
+    source: sensor.grid_import_power
+    name: "Grid Import Energy"
+    unit_prefix: k
+    round: 2
+  - platform: integration
+    source: sensor.grid_export_power
+    name: "Grid Export Energy"
+    unit_prefix: k
+    round: 2
+
+
+# ── Monthly totals ──────────────────────────────────────────────────────────
+
+utility_meter:
+  grid_energy_monthly:
+    name: "Grid Energy Monthly"
+    source: sensor.grid_import_energy
+    cycle: monthly
+
+
+# ── Automation ──────────────────────────────────────────────────────────────
+
+automation:
+  # Weekly power chart: this week's kWh per weekday into the helpers (days
+  # still to come this week keep last week's figure)
+  - id: panel_weekly_energy
+    alias: "Panels – weekly energy"
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: sensor.panel_energy_daily
+    actions:
+      - variables:
+          # attributes can read back as "1,2,3" or [1, 2, 3] – normalise both
+          imp: "{{ (state_attr('sensor.panel_energy_daily', 'imp') | string).replace('[', '').replace(']', '').replace(' ', '').split(',') }}"
+          sol: "{{ (state_attr('sensor.panel_energy_daily', 'sol') | string).replace('[', '').replace(']', '').replace(' ', '').split(',') }}"
+          lbl: "{{ (state_attr('sensor.panel_energy_daily', 'lbl') | string).replace('[', '').replace(']', '').replace(' ', '').split(',') }}"
+      - repeat:
+          for_each: [monday, tuesday, wednesday, thursday, friday, saturday, sunday]
+          sequence:
+            - variables:
+                wd: "{{ repeat.index - 1 }}"
+                ago: "{{ (now().weekday() - wd) % 7 }}"
+                day: "{{ (today_at() - timedelta(days=ago)).day }}"
+                # position of that date in the last 8 days of the daily history
+                i: >
+                  {% set ns = namespace(i=-1) %}
+                  {% for d in lbl %}{% if d | int(0) == day | int and loop.index0 >= (lbl | count) - 8 %}{% set ns.i = loop.index0 %}{% endif %}{% endfor %}
+                  {{ ns.i }}
+            - action: input_number.set_value
+              target:
+                entity_id: "input_number.grid_energy_{{ repeat.item }}"
+              data:
+                value: "{{ (imp[i] | float(0)) if i >= 0 and imp | count > i else 0 }}"
+            - action: input_number.set_value
+              target:
+                entity_id: "input_number.solar_energy_{{ repeat.item }}"
+              data:
+                value: "{{ (sol[i] | float(0)) if i >= 0 and sol | count > i else 0 }}"

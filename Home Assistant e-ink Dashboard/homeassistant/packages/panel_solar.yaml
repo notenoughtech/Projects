@@ -1,0 +1,113 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  reTerminal panels – SOLAR
+#
+#  Solar power and energy, solar history on the Energy page, and the solar
+#  forecast: the next 4 hours on the power chart and the strip over the
+#  3 h weather forecast. No solar panels? Delete this file and switch Solar
+#  off on the panels (E1003: Settings → Features; DIY: show_solar).
+#
+#  Needs:  panel_core.yaml, panel_energy.yaml, custom_templates/panel_sun.jinja
+#  To turn this feature off: delete this file, or rename it so it no
+#  longer ends in .yaml (e.g. panel_x.yaml.off), and restart Home Assistant.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── YOUR SETTINGS ──────────────────────────────────────────────────────────
+# The other packages read these at run time (attributes of
+# sensor.panel_solar_settings).
+homeassistant:
+  customize:
+    sensor.panel_solar_settings:
+      # Live solar power (W) and lifetime solar energy (kWh)
+      solar_power:       sensor.solar_power
+      solar_energy:      &solar_energy sensor.solar_energy
+      # Solar forecast, e.g. the Forecast.Solar integration:
+      #   power now (W), power in an hour (W), energy still to come today (kWh)
+      solar_forecast:    sensor.power_production_now
+      solar_next_hour:   sensor.power_production_next_hour
+      solar_remaining:   sensor.energy_production_today_remaining
+      friendly_name: "Panel solar settings"
+      icon: mdi:solar-power
+
+template:
+  - sensor:
+      - name: "Panel Solar Settings"            # YOUR SETTINGS above, as attributes
+        unique_id: panel_solar_settings
+        icon: mdi:cog
+        state: "ok"
+
+  # ───── Monthly + lifetime solar (for your own dashboards) ─────
+      - name: "Monthly Solar Energy"
+        unit_of_measurement: "kWh"
+        state: "{{ states('sensor.solar_energy_monthly') | float(0) }}"
+      - name: "Total Solar Generation Lifetime"
+        unit_of_measurement: "kWh"
+        state: "{{ states(state_attr('sensor.panel_solar_settings', 'solar_energy') or '') | float(0) }}"
+
+  # ───── Solar forecast: the next 4 hours in 30-minute steps (W) ─────
+  # future = "+30m,+1h,…,+4h". The shape follows the sun (sine from sunrise
+  # to sunset) times how much light the hourly forecast lets through, scaled
+  # to your forecast integration: its "next hour" figure where it has one,
+  # else the energy still to come today, else its "now" figure.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/10"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: event
+        event_type: esphome.panel_refresh
+    actions:
+      - action: weather.get_forecasts
+        data:
+          type: hourly
+        target:
+          entity_id: "{{ state_attr('sensor.panel_settings', 'weather') }}"
+        response_variable: hourly
+        continue_on_error: true
+    sensor:
+      - name: "Panel Solar Forecast"
+        unique_id: panel_solar_forecast
+        icon: mdi:solar-power-variant
+        unit_of_measurement: "W"
+        state: "{{ states(state_attr('sensor.panel_solar_settings', 'solar_forecast') or '') | float(0) | round(0) }}"
+        attributes:
+          future: >
+            {% from 'panel_sun.jinja' import shape, cloud %}
+            {% set t0 = as_timestamp(now()) %}
+            {% set ns = namespace(cf={}, i=0, peak=0, out=[]) %}
+            {% for e in ((hourly | default({})).values() | first | default({})).forecast | default([]) %}
+              {% set k = ((as_timestamp(e.datetime) // 3600) | int) | string %}
+              {% set ns.cf = dict(ns.cf, **{k: cloud(e.condition, e.cloud_coverage if e.cloud_coverage is defined else none) | float}) %}
+            {% endfor %}
+            {% macro model(t) %}{{ shape(t) | float * ns.cf.get(((t // 3600) | int) | string, 0.5) }}{% endmacro %}
+            {% set p1 = states(state_attr('sensor.panel_solar_settings', 'solar_next_hour') or '') | float(-1) %}
+            {% set m1 = model(t0 + 3600) | float %}
+            {% if p1 >= 0 and m1 > 0.05 %}
+              {% set ns.peak = p1 / m1 %}
+            {% else %}
+              {% set rem = states(state_attr('sensor.panel_solar_settings', 'solar_remaining') or '') | float(-1) %}
+              {% set end = as_timestamp(today_at() + timedelta(days=1)) %}
+              {% set ns.i = 0 %}
+              {% for k in range(0, 96) if t0 + k * 900 < end %}
+                {% set ns.i = ns.i + model(t0 + k * 900) | float * 0.25 %}
+              {% endfor %}
+              {% if rem > 0 and ns.i > 0 %}
+                {% set ns.peak = rem * 1000 / ns.i %}
+              {% else %}
+                {% set m0 = model(t0) | float %}
+                {% set pn = states(state_attr('sensor.panel_solar_settings', 'solar_forecast') or '') | float(0) %}
+                {% set ns.peak = pn / m0 if m0 > 0.05 else 0 %}
+              {% endif %}
+            {% endif %}
+            {% for k in range(1, 9) %}
+              {% set v = p1 if (k == 2 and p1 >= 0) else ns.peak * model(t0 + k * 1800) | float %}
+              {% set ns.out = ns.out + [([v, 0] | max) | round(0) | int] %}
+            {% endfor %}
+            {{ ns.out | join(',') }}
+
+utility_meter:
+  solar_energy_monthly:
+    name: "Solar Energy Monthly"
+    source: *solar_energy
+    cycle: monthly

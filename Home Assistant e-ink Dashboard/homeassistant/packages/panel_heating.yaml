@@ -1,0 +1,381 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  reTerminal panels – HEATING
+#
+#  Rooms on the panel → your thermostat, boiler run time and cost, daily /
+#  weekly limits, "heating on / off / set heating to 21" voice commands.
+#
+#  Needs:  panel_core.yaml (rooms), custom_templates/panel_stats.jinja
+#  To turn this feature off: delete this file, or rename it so it no
+#  longer ends in .yaml (e.g. panel_x.yaml.off), and restart Home Assistant.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── YOUR SETTINGS ──────────────────────────────────────────────────────────
+homeassistant:
+  customize:
+    sensor.panel_heating_settings:
+      # Your thermostat (e.g. a Generic Thermostat helper). Set its
+      # temperature sensor to sensor.heating_leading_temperature so the
+      # leading room picked on the panel decides when the boiler runs.
+      thermostat:     &thermostat      climate.house_thermostat
+      # The relay / switch that actually fires the boiler – heating time and
+      # cost count every minute it is on, whatever switched it on
+      boiler_relay:   &boiler_relay    switch.boiler_relay
+
+input_number:
+
+  # ── Heating ─────────────────────────────────────────────────────────────
+  # What one hour of boiler run time costs. Also set on the reTerminal's
+  # Settings page – the two stay in sync (a brand-new helper takes the
+  # panel's value). Used for the £ figures and budget alerts on both panels.
+  heating_cost_per_hour:
+    name: "Heating Cost per Hour"
+    min: 0
+    max: 5
+    step: 0.01
+    unit_of_measurement: "£/h"
+    mode: box
+    icon: mdi:cash-clock
+  # Alert (top bar on both panels) when the boiler runs longer / costs more
+  # than this. Which pair counts is set by "Heating Limit By" below.
+  # 0 = off. Also on the reTerminal's Settings page – the two stay in sync
+  # (the first time, the helpers take the panel's values).
+  heating_limit_day_hours:
+    name: "Heating Limit per Day (hours)"
+    min: 0
+    max: 24
+    step: 0.5
+    unit_of_measurement: "h"
+    mode: box
+    icon: mdi:timer-alert-outline
+  heating_limit_week_hours:
+    name: "Heating Limit per Week (hours)"
+    min: 0
+    max: 168
+    step: 1
+    unit_of_measurement: "h"
+    mode: box
+    icon: mdi:timer-alert-outline
+  heating_limit_day_cost:
+    name: "Heating Budget per Day"
+    min: 0
+    max: 50
+    step: 0.25
+    unit_of_measurement: "£"
+    mode: box
+    icon: mdi:cash-lock
+  heating_limit_week_cost:
+    name: "Heating Budget per Week"
+    min: 0
+    max: 200
+    step: 1
+    unit_of_measurement: "£"
+    mode: box
+    icon: mdi:cash-lock
+
+# Heating alert: limit run time (hours) or spend (£)
+input_select:
+  heating_limit_by:
+    name: "Heating Limit By"
+    options:
+      - Time
+      - Budget
+    icon: mdi:scale-balance
+
+template:
+  - sensor:
+      - name: "Panel Heating Settings"            # YOUR SETTINGS above, as attributes
+        unique_id: panel_heating_settings
+        icon: mdi:cog
+        state: "ok"
+
+  - sensor:
+      # Temperature of the leading room – the sensor for your thermostat.
+      # No leading room yet (or its sensor offline): the average of all rooms.
+      - name: "Heating Leading Temperature"
+        unique_id: heating_leading_temperature
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+        state: >
+          {% set t = state_attr('sensor.panel_rooms', 'lead_temp') %}
+          {% set avg = state_attr('sensor.panel_rooms', 'average') %}
+          {{ (t if t is number else avg) | float(0) | round(1) }}
+        availability: >
+          {{ state_attr('sensor.panel_rooms', 'lead_temp') is number
+             or state_attr('sensor.panel_rooms', 'average') is number }}
+        attributes:
+          source: >
+            {% set t = state_attr('sensor.panel_rooms', 'lead_temp') %}
+            {{ (state_attr('sensor.panel_rooms', 'lead_name') or 'leading room') if t is number else 'average of all rooms' }}
+
+  # ───── Heating state from the panel: pins, per-room targets, leading room ─────
+  # Updated by the reTerminal with the event "esphome.panel_heating":
+  #   {action: target, area: <area_id>, value: 21}  → set target, room leads
+  #   {action: pin,    area: <area_id>}             → pin / unpin (max 6)
+  - triggers:
+      - trigger: event
+        event_type: esphome.panel_heating
+    sensor:
+      - name: "Panel Heating State"
+        unique_id: panel_heating_state
+        icon: mdi:thermostat
+        state: >
+          {% set d = trigger.event.data %}
+          {% set lead = d.area if d.action == 'target' else this.attributes.get('lead', '') %}
+          {{ (area_name(lead) or lead) if lead else 'none' }}
+        attributes:
+          lead: >
+            {% set d = trigger.event.data %}
+            {{ d.area if d.action == 'target' else this.attributes.get('lead', '') }}
+          targets: >
+            {% set d = trigger.event.data %}
+            {% set t = this.attributes.get('targets', {}) %}
+            {% if d.action == 'target' and d.area %}{{ dict(t, **{d.area: d.value | float(19)}) }}{% else %}{{ t }}{% endif %}
+          pinned: >
+            {% set d = trigger.event.data %}
+            {% set p = this.attributes.get('pinned', []) %}
+            {% if d.action == 'pin' and d.area %}
+              {% if d.area in p %}{{ p | reject('eq', d.area) | list }}
+              {% elif p | count < 6 %}{{ p + [d.area] }}
+              {% else %}{{ p }}{% endif %}
+            {% else %}{{ p }}{% endif %}
+
+  # ───── Boiler actively heating = the relay is on (whatever switched it) ─────
+  # Feeds the heating time / cost stats, the limit alerts and the panels.
+  - triggers:
+      - trigger: state
+        entity_id: *boiler_relay
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+    variables:
+      relay: *boiler_relay
+    binary_sensor:
+      - name: "Boiler Active"
+        unique_id: panel_boiler_active
+        device_class: heat
+        icon: mdi:fire
+        state: "{{ is_state(relay, 'on') }}"
+        availability: "{{ states(relay) not in ['unknown', 'unavailable'] }}"
+
+  # ───── Boiler history: minutes per hour (Home 24 h card), hours per day and month (Energy page) ─────
+  # hourly = the 23 complete hours before this one, oldest first (minutes);
+  # the reTerminal adds the current hour from today's total.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: event
+        event_type: esphome.panel_refresh
+    actions:
+      - action: recorder.get_statistics
+        data:
+          statistic_ids: [sensor.heating_on_today]
+          start_time: "{{ (now().replace(minute=0, second=0, microsecond=0) - timedelta(hours=25)).isoformat() }}"
+          period: hour
+          types: [max]
+        response_variable: hs
+        continue_on_error: true
+      - action: recorder.get_statistics          # daily totals, back to the 1st of 11 months ago
+        data:
+          statistic_ids: [sensor.heating_on_today]
+          start_time: >
+            {% set m = now().month - 11 %}{% set y = now().year - (1 if m <= 0 else 0) %}
+            {{ today_at().replace(year=y, month=(m + 12 if m <= 0 else m), day=1).isoformat() }}
+          period: day
+          types: [max]
+        response_variable: hd
+        continue_on_error: true
+    sensor:
+      - name: "Panel Heating History"
+        unique_id: panel_heating_history
+        icon: mdi:fire
+        unit_of_measurement: "min"
+        state: "{{ (states('sensor.heating_on_today') | float(0) * 60) | round(0) }}"
+        attributes:
+          hourly: "{% from 'panel_stats.jinja' import hours_cum %}{{ hours_cum(hs, 'sensor.heating_on_today') }}"
+          # Energy page, heating view: hours per day (last 30) and per month (last 12)
+          daily: "{% from 'panel_stats.jinja' import daymax %}{{ daymax(hd, 'sensor.heating_on_today', 'v', 'day', 30) }}"
+          daily_lbl: "{% from 'panel_stats.jinja' import daymax %}{{ daymax(hd, 'sensor.heating_on_today', 'lbl', 'day', 30) }}"
+          monthly: "{% from 'panel_stats.jinja' import daymax %}{{ daymax(hd, 'sensor.heating_on_today', 'v', 'month', 12, '%.1f') }}"
+          monthly_lbl: "{% from 'panel_stats.jinja' import daymax %}{{ daymax(hd, 'sensor.heating_on_today', 'lbl', 'month', 12) }}"
+
+sensor:
+
+  # Heating time: hours the boiler relay was on – today, this week (from
+  # Monday) and each of the last 6 days. × cost per hour (set on the panel)
+  # gives the £ figures and limit alerts.
+  - platform: history_stats
+    name: "Heating On Today"
+    unique_id: heating_on_today
+    entity_id: binary_sensor.boiler_active
+    state: "on"
+    type: time
+    start: "{{ today_at() }}"
+    end: "{{ now() }}"
+  - platform: history_stats
+    name: "Heating On This Week"
+    unique_id: heating_on_this_week
+    entity_id: binary_sensor.boiler_active
+    state: "on"
+    type: time
+    start: "{{ today_at() - timedelta(days=now().weekday()) }}"
+    end: "{{ now() }}"
+  - platform: history_stats
+    name: "Heating On Day 1"          # 1 day ago
+    unique_id: heating_on_day_1
+    entity_id: binary_sensor.boiler_active
+    state: "on"
+    type: time
+    start: "{{ today_at() - timedelta(days=1) }}"
+    duration:
+      hours: 24
+  - platform: history_stats
+    name: "Heating On Day 2"          # 2 days ago
+    unique_id: heating_on_day_2
+    entity_id: binary_sensor.boiler_active
+    state: "on"
+    type: time
+    start: "{{ today_at() - timedelta(days=2) }}"
+    duration:
+      hours: 24
+  - platform: history_stats
+    name: "Heating On Day 3"          # 3 days ago
+    unique_id: heating_on_day_3
+    entity_id: binary_sensor.boiler_active
+    state: "on"
+    type: time
+    start: "{{ today_at() - timedelta(days=3) }}"
+    duration:
+      hours: 24
+  - platform: history_stats
+    name: "Heating On Day 4"          # 4 days ago
+    unique_id: heating_on_day_4
+    entity_id: binary_sensor.boiler_active
+    state: "on"
+    type: time
+    start: "{{ today_at() - timedelta(days=4) }}"
+    duration:
+      hours: 24
+  - platform: history_stats
+    name: "Heating On Day 5"          # 5 days ago
+    unique_id: heating_on_day_5
+    entity_id: binary_sensor.boiler_active
+    state: "on"
+    type: time
+    start: "{{ today_at() - timedelta(days=5) }}"
+    duration:
+      hours: 24
+  - platform: history_stats
+    name: "Heating On Day 6"          # 6 days ago
+    unique_id: heating_on_day_6
+    entity_id: binary_sensor.boiler_active
+    state: "on"
+    type: time
+    start: "{{ today_at() - timedelta(days=6) }}"
+    duration:
+      hours: 24
+
+
+# ── Automations: panel ↔ thermostat ─────────────────────────────────────────
+
+automation:
+
+  # Panel → thermostat: picking a target (or a new leading room) on the panel
+  # sets your thermostat to it
+  - id: heating_follow_leading_room
+    alias: "Heating – follow leading room"
+    mode: queued
+    triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: state
+        entity_id: sensor.panel_heating_state
+    conditions:
+      - condition: template
+        value_template: "{{ state_attr('sensor.panel_heating_state', 'lead') not in [none, ''] }}"
+    actions:
+      - variables:
+          lead: "{{ state_attr('sensor.panel_heating_state', 'lead') }}"
+          target: "{{ (state_attr('sensor.panel_heating_state', 'targets') or {}).get(lead, 19) | float(19) }}"
+      - action: climate.set_temperature
+        target:
+          entity_id: *thermostat
+        data:
+          temperature: "{{ target }}"
+
+  # Thermostat → panel: a target set on the thermostat (dashboard, app, voice)
+  # becomes the leading room's target on the panels
+  - id: heating_thermostat_to_panel
+    alias: "Heating – thermostat target to leading room"
+    mode: queued
+    variables:
+      panel: "{{ state_attr('sensor.panel_settings', 'panel_device') or 'reterminal_e1003' }}"
+    triggers:
+      - trigger: state
+        entity_id: *thermostat
+        attribute: temperature
+    conditions:
+      - condition: template
+        value_template: >
+          {% set lead = state_attr('sensor.panel_heating_state', 'lead') or '' %}
+          {% set t = trigger.to_state.attributes.temperature %}
+          {% set cur = (state_attr('sensor.panel_heating_state', 'targets') or {}).get(lead) %}
+          {{ lead != '' and t is number and (cur is none or (t - cur | float(0)) | abs >= 0.05) }}
+    actions:
+      - event: esphome.panel_heating
+        event_data:
+          action: target
+          area: "{{ state_attr('sensor.panel_heating_state', 'lead') }}"
+          value: "{{ trigger.to_state.attributes.temperature }}"
+      - delay: 2
+      - action: "esphome.{{ panel }}_refresh"       # redraw now, not within a minute
+        continue_on_error: true
+
+
+# ── VOICE (sentences in custom_sentences/en/panel.yaml) ─────────────────────
+
+intent_script:
+  # "heating on" / "heating off"
+  PanelHeatingMode:
+    action:
+      - variables:
+          panel: "{{ state_attr('sensor.panel_settings', 'panel_device') or 'reterminal_e1003' }}"
+      - action: climate.set_hvac_mode
+        target:
+          entity_id: *thermostat
+        data:
+          hvac_mode: "{{ heat_mode }}"
+      - delay: 2
+      - action: "esphome.{{ panel }}_show_page"
+        data:
+          name: heating
+    speech:
+      text: "Heating {{ 'on' if heat_mode == 'heat' else 'off' }}"
+
+  # "set heating to 21" → target of the leading room
+  PanelHeatingSet:
+    action:
+      - variables:
+          panel: "{{ state_attr('sensor.panel_settings', 'panel_device') or 'reterminal_e1003' }}"
+          lead: "{{ state_attr('sensor.panel_rooms', 'lead') or '' }}"
+      - condition: template
+        value_template: "{{ lead != '' }}"
+      - event: esphome.panel_heating
+        event_data:
+          action: target
+          area: "{{ lead }}"
+          value: "{{ temperature }}"
+      - delay: 3
+      - action: "esphome.{{ panel }}_show_page"
+        data:
+          name: heating
+    speech:
+      text: >
+        {% set lead = state_attr('sensor.panel_rooms', 'lead') or '' %}
+        {% if lead %}{{ area_name(lead) or lead }} set to {{ '%g' % (temperature | float) }} degrees
+        {% else %}There is no leading room yet. Pick one on the heating page first.{% endif %}

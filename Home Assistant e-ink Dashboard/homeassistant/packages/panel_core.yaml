@@ -1,0 +1,163 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  reTerminal panels – CORE (always needed)
+#
+#  Date, weather, rooms from your HA areas (used by heating and plants),
+#  the "show <page>" voice command and the recorder settings.
+#
+#  Needs:  custom_templates/panel_rooms.jinja, panel_sun.jinja
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── YOUR SETTINGS ──────────────────────────────────────────────────────────
+# Change the values after the &name (keep the &name: it is reused below).
+# Other packages read panel_device from here too.
+homeassistant:
+  customize:
+    sensor.panel_settings:
+      # Your weather entity (Met.no, OpenWeatherMap …)
+      weather:        &weather         weather.forecast_home
+      # The reTerminal E1003's ESPHome name with underscores (voice commands
+      # and instant refreshes call esphome.<this>_show_page / _refresh)
+      panel_device:   &panel_device    reterminal_e1003
+      friendly_name: "Panel settings"
+      icon: mdi:cog
+
+# ── DIY panel settings (it has no touch screen, so they live here) ─────────
+# Refresh: anything but "Every minute" lets the DIY panel deep-sleep between
+# refreshes (much less power). "Stay awake" keeps it on, e.g. to install an
+# update from ESPHome. Card change: how often its rotating card moves on.
+input_select:
+  diy_panel_refresh:
+    name: "DIY panel refresh"
+    icon: mdi:timer-sync-outline
+    options: ["Every minute (always on)", "Every 5 min", "Every 10 min", "Every 15 min",
+              "Every 30 min", "Every hour", "Every 2 hours"]
+  diy_panel_card_change:
+    name: "DIY panel card change"
+    icon: mdi:view-carousel-outline
+    options: ["Every 5 min", "Every minute", "Every 2 min", "Every 10 min", "Every 15 min", "Every 30 min"]
+
+input_boolean:
+  diy_panel_stay_awake:
+    name: "DIY panel stay awake"
+    icon: mdi:sleep-off
+
+template:
+
+  # ───── YOUR SETTINGS as a sensor (attributes) + date / day for the panels ─────
+  - sensor:
+      - name: "Panel Settings"
+        unique_id: panel_settings
+        state: "ok"
+      - name: "Current Date"
+        unique_id: current_date
+        icon: mdi:calendar
+        state: "{{ now().strftime('%-d %B %Y') }}"
+      - name: "Current Day of Week"
+        unique_id: current_day_of_week
+        icon: mdi:calendar-week
+        state: "{{ now().strftime('%A') }}"
+
+  # ───── Weather: next 24 h in 3 h steps ─────
+  # slots = "HH|condition|temp °C|rain %|light %|daylight %;…" (8 entries)
+  #   light    = how much sun the clouds let through (panel_sun.jinja)
+  #   daylight = how much of those 3 h the sun is up
+  # (the reTerminal turns the last two into its solar strip)
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/30"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+    actions:
+      - action: weather.get_forecasts
+        data:
+          type: hourly
+        target:
+          entity_id: *weather
+        response_variable: hourly
+    sensor:
+      - name: "Weather Forecast 3h"
+        unique_id: weather_forecast_3h
+        icon: mdi:weather-partly-cloudy
+        state: "{{ ((hourly.values() | first).forecast | default([])) | count }}"
+        attributes:
+          slots: >
+            {% from 'panel_sun.jinja' import cloud, daylight %}
+            {% set ns = namespace(out=[]) %}
+            {% for e in (hourly.values() | first).forecast | default([]) %}
+              {% set t = as_local(as_datetime(e.datetime)) %}
+              {% if t.hour % 3 == 0 and t >= now() - timedelta(minutes=90) and ns.out | count < 8 %}
+                {% set rain = e.precipitation_probability if e.precipitation_probability is defined and e.precipitation_probability is not none else '' %}
+                {% set ts = as_timestamp(t) %}
+                {% set light = (cloud(e.condition, e.cloud_coverage if e.cloud_coverage is defined else none) | float * 100) | round(0) | int %}
+                {% set day = (daylight(ts, ts + 10800) | float * 100) | round(0) | int %}
+                {% set ns.out = ns.out + [t.strftime('%H') ~ '|' ~ e.condition ~ '|' ~ (e.temperature | float(0) | round(0) | int) ~ '|' ~ rain ~ '|' ~ light ~ '|' ~ day] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.out | join(';') }}
+
+  # ───── ROOMS straight from your Home Assistant areas (heating + plants) ─────
+  # The logic lives in custom_templates/panel_rooms.jinja (see the notes there).
+  # rooms = "area_id|name|temp|hum|co2|pm25|voc|voc_unit|lux|target|pinned;…"
+  - sensor:
+      - name: "Panel Rooms"
+        unique_id: panel_rooms
+        icon: mdi:home-thermometer
+        state: "{% from 'panel_rooms.jinja' import panel_stat %}{{ panel_stat('count') }}"
+        attributes:
+          rooms: "{% from 'panel_rooms.jinja' import panel_rows %}{{ panel_rows() }}"
+          offline_count: "{% from 'panel_rooms.jinja' import panel_stat %}{{ panel_stat('offline_count') }}"
+          offline: "{% from 'panel_rooms.jinja' import panel_stat %}{{ panel_stat('offline') }}"
+          average: "{% from 'panel_rooms.jinja' import panel_stat %}{{ panel_stat('average') }}"
+          coldest_room: "{% from 'panel_rooms.jinja' import panel_stat %}{{ panel_stat('coldest_room') }}"
+          coldest_temp: "{% from 'panel_rooms.jinja' import panel_stat %}{{ panel_stat('coldest_temp') }}"
+          warmest_room: "{% from 'panel_rooms.jinja' import panel_stat %}{{ panel_stat('warmest_room') }}"
+          warmest_temp: "{% from 'panel_rooms.jinja' import panel_stat %}{{ panel_stat('warmest_temp') }}"
+          lead: "{{ state_attr('sensor.panel_heating_state', 'lead') or '' }}"
+          lead_name: >
+            {% set l = state_attr('sensor.panel_heating_state', 'lead') %}
+            {{ area_name(l) if l else '' }}
+          lead_temp: "{% from 'panel_rooms.jinja' import panel_stat %}{{ panel_stat('lead_temp') }}"
+
+
+# ── VOICE: "show heating / plants / agenda / main" (custom_sentences/en/panel.yaml) ────
+
+# The reTerminal needs "Allow the device to perform Home Assistant actions"
+# turned on in its ESPHome integration options.
+intent_script:
+  # "show heating / plants / agenda / main"
+  PanelShowPage:
+    action:
+      - variables:
+          panel: *panel_device
+      - action: "esphome.{{ panel }}_show_page"
+        data:
+          name: "{{ panel_page }}"
+    speech:
+      text: "Showing {{ panel_page }}"
+
+
+# ── RECORDER – keep the panel sensors' long attribute lists out of the database ────
+
+# If your configuration.yaml already has a recorder: section, move this
+# exclude list there instead (Home Assistant can't merge the two).
+recorder:
+  exclude:
+    entities:
+      - sensor.panel_settings
+      - sensor.panel_rooms
+      - sensor.panel_agenda
+      - sensor.panel_energy_daily
+      - sensor.panel_energy_monthly
+      - sensor.panel_power_12h
+      - sensor.panel_water_history
+      - sensor.panel_heating_history
+      - sensor.panel_lights
+      - sensor.panel_lights_settings
+      - sensor.panel_plants
+      - sensor.weather_forecast_3h
+      - sensor.panel_energy_settings
+      - sensor.panel_water_settings
+      - sensor.panel_heating_settings
+      - sensor.panel_agenda_settings

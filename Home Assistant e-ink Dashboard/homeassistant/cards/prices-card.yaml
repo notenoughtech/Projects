@@ -1,0 +1,57 @@
+# Utility prices card for a Home Assistant dashboard
+# Dashboard → ⋮ Edit → + Add card → Manual → paste all of this.
+# Both panels read these helpers, so a change here shows up on the next
+# refresh. The heating price and limits also sync with the reTerminal's
+# Settings page (changing them there updates these, and the other way round).
+# A row that says "Entity not available": that feature's package isn't
+# installed, or (water) the tariff helpers aren't created yet – see
+# packages/panel_water.yaml. Delete the rows you don't use.
+type: grid
+columns: 3
+square: false
+cards:
+  - type: entities
+    title: Electricity
+    icon: mdi:flash
+    entities:
+      - entity: input_number.energy_price
+        name: Price per kWh
+      - entity: input_number.energy_standing_charge
+        name: Standing charge per day
+      - type: divider
+      - entity: sensor.monthly_grid_cost
+        name: This month so far
+  - type: entities
+    title: Water
+    icon: mdi:water
+    entities:
+      - entity: input_number.water_price
+        name: Price per m³
+      - entity: input_number.water_standing_charge
+        name: Standing charge per year
+      - entity: input_number.waste_water_standing_charge
+        name: Waste water per year
+      - type: divider
+      - entity: sensor.panel_water_history
+        name: Used in the last 30 days
+  - type: entities
+    title: Heating
+    icon: mdi:fire
+    entities:
+      - entity: input_number.heating_cost_per_hour
+        name: Boiler cost per hour
+      - entity: input_select.heating_limit_by
+        name: Alert by
+      - entity: input_number.heating_limit_day_hours
+        name: Daily limit (hours)
+      - entity: input_number.heating_limit_week_hours
+        name: Weekly limit (hours)
+      - entity: input_number.heating_limit_day_cost
+        name: Daily budget
+      - entity: input_number.heating_limit_week_cost
+        name: Weekly budget
+      - type: divider
+      - entity: sensor.heating_on_today
+        name: Boiler on today
+      - entity: sensor.heating_on_this_week
+        name: Boiler on this week

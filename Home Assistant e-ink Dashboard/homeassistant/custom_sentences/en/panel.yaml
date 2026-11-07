@@ -1,0 +1,53 @@
+# Voice commands for the reTerminal panels.
+# Put this file in your Home Assistant config folder as
+#   custom_sentences/en/panel.yaml
+# (next to configuration.yaml), then restart Home Assistant.
+# What each command does: intent_script in packages/panel_core.yaml ("show …")
+# and packages/panel_heating.yaml (the heating commands).
+# Works from the reTerminal E1003 ("Okay Nabu" / hold the green button) and
+# from any other Assist device or the HA app.
+language: "en"
+intents:
+  PanelShowPage:
+    data:
+      - sentences:
+          - "show [the] {panel_page} [page|screen]"
+          - "(open|go to) [the] {panel_page} [page|screen]"
+  PanelHeatingMode:
+    data:
+      - sentences:
+          - "[turn|switch] [the] heating {heat_mode}"
+          - "[turn|switch] {heat_mode} [the] heating"
+  PanelHeatingSet:
+    data:
+      - sentences:
+          - "set [the] heating to {temperature} [degrees] [celsius|c]"
+          - "heating to {temperature} [degrees] [celsius|c]"
+lists:
+  panel_page:
+    values:
+      - in: "(main|home|dashboard|start)"
+        out: "main"
+      - in: "(heating|thermostat|rooms)"
+        out: "heating"
+      - in: "(plants|plant)"
+        out: "plants"
+      - in: "(agenda|calendar|tasks|to-do|to do)"
+        out: "agenda"
+      - in: "(energy|power|electricity)"
+        out: "energy"
+      - in: "(lights|lamps|lighting)"
+        out: "lights"
+      - in: "settings"
+        out: "settings"
+  heat_mode:
+    values:
+      - in: "on"
+        out: "heat"
+      - in: "off"
+        out: "off"
+  temperature:
+    range:
+      from: 5
+      to: 30
+      fractions: halves      # "set heating to 20.5" works too

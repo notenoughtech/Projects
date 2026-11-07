@@ -1,0 +1,139 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  reTerminal panels – WATER
+#
+#  Water used today / this week / 30 days / 12 months, and its cost.
+#
+#  Needs:  panel_core.yaml, custom_templates/panel_stats.jinja
+#  To turn this feature off: delete this file, or rename it so it no
+#  longer ends in .yaml (e.g. panel_x.yaml.off), and restart Home Assistant.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── YOUR SETTINGS ──────────────────────────────────────────────────────────
+homeassistant:
+  customize:
+    sensor.panel_water_settings:
+      # Water meter running total (L or m³, state_class total_increasing) –
+      # the one your Energy dashboard's water graph uses
+      water_meter:    &water_meter     sensor.water_meter_total
+
+# ── Water tariff ───────────────────────────────────────────────────────────
+# The panels read input_number.water_price (£/m³) and the yearly
+# input_number.water_standing_charge / waste_water_standing_charge.
+# If you haven't created those in the UI (Settings → Helpers), remove the
+# "#" from the lines below. Don't define them in both places.
+# input_number:
+  # water_price:
+  #   name: "Water Price"
+  #   min: 0
+  #   max: 20
+  #   step: 0.0001
+  #   unit_of_measurement: "£/m³"
+  #   mode: box
+  # water_standing_charge:
+  #   name: "Water Standing Charge"
+  #   min: 0
+  #   max: 500
+  #   step: 0.01
+  #   unit_of_measurement: "£/year"
+  #   mode: box
+  # waste_water_standing_charge:
+  #   name: "Waste Water Standing Charge"
+  #   min: 0
+  #   max: 500
+  #   step: 0.01
+  #   unit_of_measurement: "£/year"
+  #   mode: box
+
+template:
+  - sensor:
+      - name: "Panel Water Settings"            # YOUR SETTINGS above, as attributes
+        unique_id: panel_water_settings
+        icon: mdi:cog
+        state: "ok"
+
+  # ───── Water history (litres): 24 hours, 30 days, 12 months, this week ─────
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: event                       # green button on the reTerminal
+        event_type: esphome.panel_refresh
+    variables:
+      meter: *water_meter
+    actions:
+      - action: recorder.get_statistics
+        data:
+          statistic_ids: [*water_meter]
+          start_time: "{{ (today_at() - timedelta(days=29)).isoformat() }}"
+          period: day
+          types: [change]
+          units:
+            volume: L
+        response_variable: wd
+        continue_on_error: true
+      - action: recorder.get_statistics
+        data:
+          statistic_ids: [*water_meter]
+          start_time: >
+            {% set m = now().month - 11 %}{% set y = now().year - (1 if m <= 0 else 0) %}
+            {{ today_at().replace(year=y, month=(m + 12 if m <= 0 else m), day=1).isoformat() }}
+          period: month
+          types: [change]
+          units:
+            volume: L
+        response_variable: wm
+        continue_on_error: true
+      - action: recorder.get_statistics
+        data:
+          statistic_ids: [*water_meter]
+          start_time: "{{ (now().replace(minute=0, second=0, microsecond=0) - timedelta(hours=24)).isoformat() }}"
+          period: hour
+          types: [change]
+          units:
+            volume: L
+        response_variable: wh
+        continue_on_error: true
+    sensor:
+      - name: "Panel Water History"
+        unique_id: panel_water_history
+        icon: mdi:water
+        unit_of_measurement: "L"
+        state: "{% from 'panel_stats.jinja' import total %}{{ total(wd, meter) | float(0) | round(0) }}"
+        attributes:
+          source: "{{ meter }}"
+          daily: "{% from 'panel_stats.jinja' import series %}{{ series(wd, [meter], meter, 'day', 30, '%.0f') }}"
+          daily_lbl: "{% from 'panel_stats.jinja' import series %}{{ series(wd, [meter], 'lbl', 'day', 30) }}"
+          monthly: "{% from 'panel_stats.jinja' import series %}{{ series(wm, [meter], meter, 'month', 12, '%.0f') }}"
+          monthly_lbl: "{% from 'panel_stats.jinja' import series %}{{ series(wm, [meter], 'lbl', 'month', 12) }}"
+          week: "{% from 'panel_stats.jinja' import week %}{{ week(wd, meter) }}"
+          # the last 7 days, oldest first, today last
+          last7: "{% from 'panel_stats.jinja' import last7 %}{{ last7(wd, meter, '%.0f') }}"
+          # the 23 complete hours before this one, oldest first (Home: water view)
+          hourly: "{% from 'panel_stats.jinja' import hours %}{{ hours(wh, meter) }}"
+          today: "{% from 'panel_stats.jinja' import today %}{{ today(wd, meter) }}"
+
+  # ───── Water used today (litres) – what the panels show ─────
+  # From a daily utility meter on your water meter (survives restarts), or
+  # HA's statistics for today if those are higher (e.g. the first day).
+  - sensor:
+      - name: "Panel Water Today"
+        unique_id: panel_water_today
+        icon: mdi:water
+        unit_of_measurement: "L"
+        device_class: water
+        state_class: total_increasing
+        state: >
+          {% set v = states('sensor.panel_water_today_meter') | float(0) %}
+          {% set u = state_attr('sensor.panel_water_today_meter', 'unit_of_measurement') or 'L' %}
+          {% set litres = v * 1000 if u in ['m³', 'm3'] else v * 3.78541 if u == 'gal' else v * 28.3168 if u == 'ft³' else v %}
+          {% set stat = state_attr('sensor.panel_water_history', 'today') | float(0) %}
+          {{ [litres, stat] | max | round(1) }}
+
+utility_meter:
+  panel_water_today_meter:
+    name: "Panel Water Today Meter"
+    source: *water_meter
+    cycle: daily

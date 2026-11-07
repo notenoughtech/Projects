@@ -1,0 +1,106 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  reTerminal panels – AGENDA (calendar + tasks)
+#
+#  Next 7 days of events and your open tasks; tasks can be ticked off on
+#  the reTerminal.
+#
+#  Needs:  panel_core.yaml
+#  To turn this feature off: delete this file, or rename it so it no
+#  longer ends in .yaml (e.g. panel_x.yaml.off), and restart Home Assistant.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── YOUR SETTINGS ──────────────────────────────────────────────────────────
+homeassistant:
+  customize:
+    sensor.panel_agenda_settings:
+      # Google Calendar / Google Tasks or any other calendar.* / todo.* –
+      # as many as you like, e.g.
+      #   calendars:  [calendar.family, calendar.work, calendar.uk_holidays]
+      #   todo_lists: [todo.my_tasks, todo.shopping_list, todo.work]
+      # Events show their calendar's name, tasks their list's name.
+      calendars:      &calendars       [calendar.family]
+      todo_lists:     &todo_lists      [todo.my_tasks]
+
+template:
+  - sensor:
+      - name: "Panel Agenda Settings"            # YOUR SETTINGS above, as attributes
+        unique_id: panel_agenda_settings
+        icon: mdi:cog
+        state: "ok"
+
+  # ───── Agenda: calendar events (next 7 days) + open tasks ─────
+  # Google Calendar / Google Tasks are official integrations (Settings →
+  # Devices & services → Add integration); sign-in happens there, so no
+  # credentials go in this file. Pick the calendars / lists in YOUR SETTINGS.
+  #   events = "YYYY-MM-DD|HH:MM|HH:MM|summary|calendar;…"  (no times = all day)
+  #   tasks  = "uid|summary|due YYYY-MM-DD|todo list|list name;…"
+  # Up to 40 events and 40 tasks; the reTerminal pages through them.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: state
+        entity_id: *calendars
+      - trigger: state
+        entity_id: *todo_lists
+      - trigger: event                       # a task ticked off on the reTerminal
+        event_type: esphome.panel_agenda
+      - trigger: event
+        event_type: esphome.panel_refresh
+    actions:
+      - action: calendar.get_events
+        target:
+          entity_id: *calendars
+        data:
+          start_date_time: "{{ today_at() }}"
+          end_date_time: "{{ today_at() + timedelta(days=7) }}"
+        response_variable: cal
+        continue_on_error: true
+      - action: todo.get_items
+        target:
+          entity_id: *todo_lists
+        data:
+          status: needs_action
+        response_variable: todo
+        continue_on_error: true
+    sensor:
+      - name: "Panel Agenda"
+        unique_id: panel_agenda
+        icon: mdi:calendar-check
+        state: >
+          {% set ns = namespace(n=0) %}
+          {% for k, v in (cal | default({})).items() %}{% set ns.n = ns.n + (v.events | default([]) | count) %}{% endfor %}
+          {{ ns.n }}
+        attributes:
+          events: >
+            {% set ns = namespace(out=[]) %}
+            {% set today = now().date() | string %}
+            {% for ent, v in (cal | default({})).items() %}
+              {% set cname = (state_attr(ent, 'friendly_name') or ent.split('.')[1]) | replace('|', ' ') | replace(';', ' ') %}
+              {% for e in v.events | default([]) %}
+                {% if 'T' not in (e.start | string) %}
+                  {% set d = e.start | string %}{% set s = '' %}{% set en = '' %}
+                {% else %}
+                  {% set st = as_local(as_datetime(e.start)) %}{% set et = as_local(as_datetime(e.end)) %}
+                  {% set d = st.date() | string %}{% set s = st.strftime('%H:%M') %}{% set en = et.strftime('%H:%M') %}
+                {% endif %}
+                {% if d < today %}{% set d = today %}{% set s = '' %}{% endif %}
+                {% set title = (e.summary | default('(no title)')) | replace('|', '/') | replace(';', ',') | replace('\n', ' ') %}
+                {% set ns.out = ns.out + [{'k': d ~ ' ' ~ (s or '00:00'), 'v': d ~ '|' ~ s ~ '|' ~ en ~ '|' ~ title[:48] ~ '|' ~ cname[:20]}] %}
+              {% endfor %}
+            {% endfor %}
+            {{ (ns.out | sort(attribute='k') | map(attribute='v') | list)[:40] | join(';') }}
+          tasks: >
+            {% set ns = namespace(out=[]) %}
+            {% for ent, v in (todo | default({})).items() %}
+              {% set lname = (state_attr(ent, 'friendly_name') or ent.split('.')[1]) | replace('|', ' ') | replace(';', ' ') %}
+              {% for t in v['items'] | default([]) %}
+                {% set due = (t.due | default('') | string)[:10] if t.due is defined and t.due else '' %}
+                {% set title = (t.summary | default('')) | replace('|', '/') | replace(';', ',') | replace('\n', ' ') %}
+                {% set ns.out = ns.out + [{'k': (due or '9999') ~ lname, 'v': t.uid ~ '|' ~ title[:48] ~ '|' ~ due ~ '|' ~ ent ~ '|' ~ lname[:20]}] %}
+              {% endfor %}
+            {% endfor %}
+            {{ (ns.out | sort(attribute='k') | map(attribute='v') | list)[:40] | join(';') }}

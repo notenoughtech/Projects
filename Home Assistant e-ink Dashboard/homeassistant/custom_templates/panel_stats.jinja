@@ -1,0 +1,168 @@
+{#- ─────────────────────────────────────────────────────────────────────────
+    reTerminal panels – STATISTICS (used by panel_energy, panel_water, panel_heating)
+    Put this file in  <config>/custom_templates/panel_stats.jinja
+
+    Formats recorder.get_statistics responses for the panels
+    ───────────────────────────────────────────────────────────────────────── -#}
+
+{#- Per-period figures for several statistics, lined up on the same periods
+    (the last n periods that have data, oldest first).
+      resp    the response of recorder.get_statistics (types: [change])
+      ids     list of statistic ids, e.g. [import, solar, export]
+      show    which one to print (its id), or 'lbl' for the day / month numbers
+      period  'day' or 'month'
+      fmt     number format, e.g. '%.1f'                                    -#}
+{%- macro series(resp, ids, show, period='day', n=30, fmt='%.1f') -%}
+  {%- set s = (resp or {}).get('statistics', {}) -%}
+  {%- set ns = namespace(v={}, keys=[]) -%}
+  {%- for sid in ids -%}
+    {%- for e in s.get(sid, []) -%}
+      {%- set t = as_local(as_datetime(e.start)) -%}
+      {%- set k = t.strftime('%Y-%m-%d' if period == 'day' else '%Y-%m') -%}
+      {%- set ns.v = dict(ns.v, **{sid ~ '@' ~ k: [e.change | float(0), 0] | max}) -%}
+      {%- if k not in ns.keys -%}{%- set ns.keys = ns.keys + [k] -%}{%- endif -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {%- set keys = (ns.keys | sort)[-n:] -%}
+  {%- set out = namespace(o=[]) -%}
+  {%- for k in keys -%}
+    {%- if show == 'lbl' -%}
+      {%- set out.o = out.o + ['%d' % ((k[8:10] if period == 'day' else k[5:7]) | int)] -%}
+    {%- else -%}
+      {%- set out.o = out.o + [fmt % ns.v.get(show ~ '@' ~ k, 0)] -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{- out.o | join(',') -}}
+{%- endmacro -%}
+
+{#- Sum of one statistic's changes in a response -#}
+{%- macro total(resp, sid) -%}
+  {{- ((resp or {}).get('statistics', {}).get(sid, []) | map(attribute='change') | map('float', 0) | select('>', 0) | sum) | round(1) -}}
+{%- endmacro -%}
+
+{#- This week Monday…Sunday from a daily response; '0' where there's no data -#}
+{%- macro week(resp, sid, fmt='%.0f') -%}
+  {%- set ns = namespace(w=['0'] * 7) -%}
+  {%- set since = (today_at() - timedelta(days=6)).date() -%}
+  {%- for e in (resp or {}).get('statistics', {}).get(sid, []) -%}
+    {%- set t = as_local(as_datetime(e.start)) -%}
+    {%- if t.date() >= since -%}
+      {%- set i = t.weekday() -%}
+      {%- set ns.w = ns.w[:i] + [fmt % ([e.change | float(0), 0] | max)] + ns.w[i + 1:] -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{- ns.w | join(',') -}}
+{%- endmacro -%}
+
+{#- n ten-minute averages, default 72 (oldest first) from a 5-minute response (types:
+    [mean]); '' where there's no data.
+      t0     start of the newest slot (Unix time, a multiple of 600)
+      floor  lowest value kept (none = keep negatives)                     -#}
+{%- macro slots(resp, sid, t0, floor=none, n=72) -%}
+  {%- set start = t0 - (n - 1) * 600 -%}
+  {%- set ns = namespace(sum=[0] * n, cnt=[0] * n) -%}
+  {%- for e in (resp or {}).get('statistics', {}).get(sid, []) -%}
+    {%- set i = ((as_timestamp(as_datetime(e.start)) - start) // 600) | int -%}
+    {%- if 0 <= i < n and e.mean is not none -%}
+      {%- set ns.sum = ns.sum[:i] + [ns.sum[i] + e.mean | float(0)] + ns.sum[i + 1:] -%}
+      {%- set ns.cnt = ns.cnt[:i] + [ns.cnt[i] + 1] + ns.cnt[i + 1:] -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- set out = namespace(o=[]) -%}
+  {%- for i in range(n) -%}
+    {%- if ns.cnt[i] -%}
+      {%- set v = ns.sum[i] / ns.cnt[i] -%}
+      {%- set v = [v, floor] | max if floor is not none else v -%}
+      {%- set out.o = out.o + [v | round(0) | int | string] -%}
+    {%- else -%}{%- set out.o = out.o + [''] -%}{%- endif -%}
+  {%- endfor -%}
+  {{- out.o | join(',') -}}
+{%- endmacro -%}
+
+{#- The last n complete hours (oldest first, ending with the hour before the
+    current one) from an hourly response (types: [change]); 0 = no data.
+    The reTerminal adds the current hour itself from today's total.        -#}
+{%- macro hours(resp, sid, n=23, fmt='%.0f') -%}
+  {%- set end = as_timestamp(now().replace(minute=0, second=0, microsecond=0)) | int -%}
+  {%- set ns = namespace(v={}) -%}
+  {%- for e in (resp or {}).get('statistics', {}).get(sid, []) -%}
+    {%- set k = (as_timestamp(as_datetime(e.start)) | int) | string -%}
+    {%- set ns.v = dict(ns.v, **{k: [e.change | float(0), 0] | max}) -%}
+  {%- endfor -%}
+  {%- set out = namespace(o=[]) -%}
+  {%- for h in range(n) -%}
+    {%- set out.o = out.o + [fmt % ns.v.get((end - (n - h) * 3600) | string, 0)] -%}
+  {%- endfor -%}
+  {{- out.o | join(',') -}}
+{%- endmacro -%}
+
+{#- Today's change from a daily response (0 if today has no row yet) -#}
+{%- macro today(resp, sid) -%}
+  {%- set ns = namespace(v=0) -%}
+  {%- for e in (resp or {}).get('statistics', {}).get(sid, []) -%}
+    {%- if as_local(as_datetime(e.start)).date() == now().date() -%}{%- set ns.v = [e.change | float(0), 0] | max -%}{%- endif -%}
+  {%- endfor -%}
+  {{- ns.v -}}
+{%- endmacro -%}
+
+{#- The last 7 days, oldest first, today last (today = so far) – from a daily
+    response (types: [change]); 0 where there's no data                     -#}
+{%- macro last7(resp, sid, fmt='%.1f') -%}
+  {%- set ns = namespace(v={}) -%}
+  {%- for e in (resp or {}).get('statistics', {}).get(sid, []) -%}
+    {%- set ns.v = dict(ns.v, **{as_local(as_datetime(e.start)).date() | string: [e.change | float(0), 0] | max}) -%}
+  {%- endfor -%}
+  {%- set out = namespace(o=[]) -%}
+  {%- for i in range(7) -%}
+    {%- set out.o = out.o + [fmt % ns.v.get((today_at() - timedelta(days=6 - i)).date() | string, 0)] -%}
+  {%- endfor -%}
+  {{- out.o | join(',') -}}
+{%- endmacro -%}
+
+{#- Like hours(), for a sensor that counts up through the day and starts again
+    at midnight (e.g. history_stats "time on today", type max): the amount
+    added in each of the last n complete hours, oldest first.               -#}
+{%- macro hours_cum(resp, sid, n=23, scale=60, fmt='%.0f') -%}
+  {%- set end = as_timestamp(now().replace(minute=0, second=0, microsecond=0)) | int -%}
+  {%- set ns = namespace(v={}, out=[], prev=none) -%}
+  {%- for e in (resp or {}).get('statistics', {}).get(sid, []) -%}
+    {%- set ns.v = dict(ns.v, **{((as_timestamp(as_datetime(e.start)) | int) | string): e.max | float(0)}) -%}
+  {%- endfor -%}
+  {%- for h in range(n + 1) -%}
+    {%- set k = (end - (n + 1 - h) * 3600) | string -%}
+    {%- set cur = ns.v.get(k) -%}
+    {%- if h > 0 -%}
+      {%- set midnight = ((k | int) | timestamp_custom('%H', true)) == '00' -%}
+      {%- set d = 0 if cur is none else (cur if (cur < (ns.prev or 0) or midnight) else (0 if ns.prev is none else cur - ns.prev)) -%}
+      {%- set ns.out = ns.out + [fmt % ([d, 0] | max * scale)] -%}
+    {%- endif -%}
+    {%- if cur is not none -%}{%- set ns.prev = cur -%}{%- endif -%}
+  {%- endfor -%}
+  {{- ns.out | join(',') -}}
+{%- endmacro -%}
+
+
+{#- Daily or monthly totals of a "so far today" sensor (e.g. history_stats
+    heating_on_today, hours) from a DAILY response (types: [max]): each day's max
+    is that day's total; a month is the sum of its days. The last n periods
+    with data, oldest first. show: 'v' for the values, 'lbl' for day / month numbers -#}
+{%- macro daymax(resp, sid, show, period='day', n=30, fmt='%.2f') -%}
+  {%- set ns = namespace(v={}, keys=[]) -%}
+  {%- for e in (resp or {}).get('statistics', {}).get(sid, []) -%}
+    {%- if e.max is not none -%}
+      {%- set t = as_local(as_datetime(e.start)) -%}
+      {%- set k = t.strftime('%Y-%m-%d' if period == 'day' else '%Y-%m') -%}
+      {%- set ns.v = dict(ns.v, **{k: ns.v.get(k, 0) + ([e.max | float(0), 0] | max)}) -%}
+      {%- if k not in ns.keys -%}{%- set ns.keys = ns.keys + [k] -%}{%- endif -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- set out = namespace(o=[]) -%}
+  {%- for k in (ns.keys | sort)[-n:] -%}
+    {%- if show == 'lbl' -%}
+      {%- set out.o = out.o + ['%d' % ((k[8:10] if period == 'day' else k[5:7]) | int)] -%}
+    {%- else -%}
+      {%- set out.o = out.o + [fmt % ns.v[k]] -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{- out.o | join(',') -}}
+{%- endmacro -%}
