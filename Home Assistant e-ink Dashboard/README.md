@@ -18,15 +18,17 @@ Both panels show energy, solar, water, heating, plants, calendar and tasks. The 
 1. [What you get](#what-you-get)
 2. [How it fits together](#how-it-fits-together)
 3. [What you need](#what-you-need)
-4. [What's in this repo](#whats-in-this-repo)
-5. [Install – Home Assistant](#install--home-assistant)
-6. [Install – ESPHome](#install--esphome)
-7. [Using the reTerminal](#using-the-reterminal)
-8. [Feature guides](#feature-guides) – [Weather](#weather) · [Energy](#energy) · [Solar](#solar) · [Water](#water) · [Heating](#heating) · [Plants](#plants) · [Tasks and calendar](#tasks-and-calendar) · [Smart controls](#smart-controls) · [Settings](#settings)
-9. [The DIY panel](#the-diy-panel)
-10. [Voice commands](#voice-commands)
-11. [Troubleshooting](#troubleshooting)
-12. [Updating](#updating)
+4. [Hardware](#hardware)
+5. [What's in this repo](#whats-in-this-repo)
+6. [Install – Home Assistant](#install--home-assistant)
+7. [Install – ESPHome](#install--esphome)
+8. [Using the reTerminal](#using-the-reterminal)
+9. [Feature guides](#feature-guides) – [Weather](#weather) · [Energy](#energy) · [Solar](#solar) · [Water](#water) · [Heating](#heating) · [Plants](#plants) · [Tasks and calendar](#tasks-and-calendar) · [Smart controls](#smart-controls) · [Settings](#settings)
+10. [The DIY panel](#the-diy-panel)
+11. [Voice commands](#voice-commands)
+12. [Troubleshooting](#troubleshooting)
+13. [Updating](#updating)
+14. [Coming next](#coming-next)
 
 ---
 
@@ -68,6 +70,96 @@ Home Assistant does the heavy lifting. Each `packages/panel_*.yaml` reads your o
 | Plants | Nothing. It's all virtual |
 | Tasks and calendar | Any `calendar.*` and `todo.*` entities (Google, CalDAV, Local…) |
 | Smart controls | Lights and switches in areas, plus three labels |
+
+---
+
+## Hardware
+
+The panels don't care what brand your meter or thermostat is. If it shows up in Home Assistant as an entity, it will work. Below is what I used, and a few tried and tested options if you're starting from zero.
+
+### The displays
+
+| Device | Used for | Link |
+| --- | --- | --- |
+| **Seeed reTerminal E1003** | 10.3" touch e-ink panel with battery, buttons, buzzer and mic. The main panel | [Wiki](https://wiki.seeedstudio.com/getting_started_with_reterminal_e1003/) · [RobotShop](https://eu.robotshop.com/products/seeedstudio-reterminal-e1003-103-monochrome-epaper-display) |
+| **Seeed XIAO ESP32-C3** | Brains of the DIY panel | [The Pi Hut](https://thepihut.com/collections/new-products-maker/products/seeed-xiao-esp32c3) |
+| **Waveshare 7.5" e-Paper (V2, 800×480, black/white)** | Screen of the DIY panel | [Waveshare wiki](https://www.waveshare.com/wiki/7.5inch_e-Paper_HAT_Manual) |
+
+Other reTerminal E-series models are listed on the [Seeed overview page](https://wiki.seeedstudio.com/reterminal_e10xx_main_page/). The E1003 is the one with touch, which the multi-page layout relies on.
+
+### Weather
+
+| | |
+| --- | --- |
+| **Used** | [Met.no](https://www.home-assistant.io/integrations/met/) – free, no account, no hardware |
+| **Suggested** | Any weather integration with an hourly forecast: [OpenWeatherMap](https://www.home-assistant.io/integrations/openweathermap/), [Met Office](https://www.home-assistant.io/integrations/metoffice/) (UK), [Pirate Weather](https://github.com/Pirate-Weather/pirate-weather-ha) |
+
+### Energy
+
+| | |
+| --- | --- |
+| **Used** | <!-- add your grid meter / CT clamp here --> |
+| **Suggested** | [Shelly Pro 3EM](https://shelly.com/blogs/documentation/shelly-pro-3em) or Shelly EM – CT clamps on the mains, live W with sign, local [Shelly integration](https://www.home-assistant.io/integrations/shelly/) |
+| | [Home Assistant Glow](https://github.com/klaasnicolaas/home-assistant-glow) – ESPHome LED pulse reader for meters with a blinking LED, cheap DIY |
+| | UK smart meters: a Glow IHD/CAD ([Hildebrand](https://glowmarkt.com/)) or an [Octopus Home Mini](https://www.home-assistant.io/integrations/octopus_energy/) for near-live readings without touching the wiring |
+
+### Solar
+
+| | |
+| --- | --- |
+| **Used** | <!-- add your inverter here --> + [Forecast.Solar](https://www.home-assistant.io/integrations/forecast_solar/) |
+| **Suggested** | Most inverters have an integration: [SolarEdge](https://www.home-assistant.io/integrations/solaredge/), [Enphase Envoy](https://www.home-assistant.io/integrations/enphase_envoy/), [Fronius](https://www.home-assistant.io/integrations/fronius/), [GivEnergy](https://github.com/GivEnergy/giv_tcp), [Solax](https://www.home-assistant.io/integrations/solax/) |
+| | No integration? A Shelly EM clamp on the inverter's AC output gives you power and kWh |
+| | [Solcast](https://github.com/BJReplay/ha-solcast-solar) works in place of Forecast.Solar |
+
+### Water
+
+| | |
+| --- | --- |
+| **Used** | <!-- add your water meter reader here --> |
+| **Suggested** | [AI-on-the-edge-device](https://github.com/jomjol/AI-on-the-edge-device) – an ESP32-CAM that reads the dial on your meter. No plumbing |
+| | Meters with a pulse output or magnetic dial: an ESPHome [pulse meter](https://esphome.io/components/sensor/pulse_meter.html) with a reed switch or hall sensor |
+| | Inline flow meters (Flume, Shelly + flow sensor) if you can get to the pipe |
+
+### Heating
+
+| | |
+| --- | --- |
+| **Used** | A boiler relay switched from Home Assistant, a [Generic Thermostat](https://www.home-assistant.io/integrations/generic_thermostat/) helper, and a temperature + humidity sensor in every room |
+| **Suggested relay** | A Shelly 1 / Shelly 1 Mini (dry contact – check your boiler's call-for-heat terminals), a Sonoff relay flashed with ESPHome, or your existing smart thermostat ([Tado](https://www.home-assistant.io/integrations/tado/), [Nest](https://www.home-assistant.io/integrations/nest/), [Hive](https://www.home-assistant.io/integrations/hive/)) |
+| **Suggested sensors** | Zigbee temp/humidity sensors (Aqara, Sonoff SNZB-02 series) via [ZHA](https://www.home-assistant.io/integrations/zha/) or Zigbee2MQTT, or Xiaomi LYWSD03MMC over [BTHome](https://www.home-assistant.io/integrations/bthome/) |
+
+> ⚠️ Boiler wiring is mains voltage. If you're not sure, get an electrician or heating engineer to fit the relay.
+
+### Plants
+
+| | |
+| --- | --- |
+| **Used** | Nothing – the reservoirs are virtual, driven by room temperature |
+| **Suggested** | Nothing yet. Smart soil sensors are on the [Coming next](#coming-next) list |
+
+### Tasks and calendar
+
+| | |
+| --- | --- |
+| **Used** | Calendar and to-do integrations already in Home Assistant |
+| **Suggested** | [Google Calendar](https://www.home-assistant.io/integrations/google/), [Google Tasks](https://www.home-assistant.io/integrations/google_tasks/), [CalDAV](https://www.home-assistant.io/integrations/caldav/) (iCloud, Nextcloud), [Local Calendar](https://www.home-assistant.io/integrations/local_calendar/), [Local To-do](https://www.home-assistant.io/integrations/local_todo/), [Todoist](https://www.home-assistant.io/integrations/todoist/) |
+
+### Smart controls
+
+| | |
+| --- | --- |
+| **Used** | Lights and devices already in Home Assistant, tagged with labels |
+| **Suggested lights** | [Philips Hue](https://www.home-assistant.io/integrations/hue/), IKEA, Aqara or any Zigbee bulbs via ZHA / Zigbee2MQTT, [WLED](https://www.home-assistant.io/integrations/wled/) strips |
+| **Suggested devices** | Smart plugs and relays ([Shelly](https://www.home-assistant.io/integrations/shelly/), [TP-Link Kasa / Tapo](https://www.home-assistant.io/integrations/tplink/)), fans, TVs, blinds |
+| **Room sensors** | Any motion, lux, temperature and humidity sensors in the area (Aqara FP2 / P2, Hue motion sensor) |
+
+### Settings and voice
+
+| | |
+| --- | --- |
+| **Used** | Nothing extra – the E1003 has the mic, buzzer and battery built in |
+| **Suggested** | The [Speech-to-Phrase](https://github.com/OHF-voice/speech-to-phrase) add-on for fast, local voice commands, or [Whisper](https://www.home-assistant.io/integrations/wyoming/) |
 
 ---
 
@@ -478,6 +570,19 @@ The voice assistant pipeline you pick for the panel needs a **speech-to-text** e
 3. Check the version tag in the Home footnote.
 
 Some updates change what Home Assistant sends to the panels. Always update both sides together.
+
+---
+
+## Coming next
+
+This is far from finished. Here's what's on my list:
+
+- **Individual PV panel monitoring** – per-panel output from microinverters or optimisers, so you can spot a shaded or failing panel straight from the Energy page.
+- **Smart plant sensors** – support for soil sensors that read moisture and probe temperature. Plants with a sensor will use real soil readings instead of the virtual reservoir and the room temperature.
+- **Battery storage management** – charge level, charge and discharge power, and controls for charging on cheap tariffs. This builds on the battery size suggestion that's already in the Energy page.
+- **Gas usage** – gas meter readings and costs next to power, water and heating, including in Bills Today and the alerts.
+
+Got a device you'd like supported, or an idea for the panels? Open an issue.
 
 ---
 
