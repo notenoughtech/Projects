@@ -57,7 +57,7 @@ Home Assistant does the heavy lifting. Each `packages/panel_*.yaml` reads your o
 ## What you need
 
 - **Home Assistant 2025.1 or newer**, with the **ESPHome** add-on (or ESPHome running anywhere else).
-- A **reTerminal E1003**, and/or a **XIAO ESP32-C3 + Waveshare 7.5" V2** e-ink screen.
+- A **reTerminal E1003** for the full touch panel, and/or a 7.5" panel for the single-page layout: a **reTerminal E1001 / E1002**, **XIAO 7.5" ePaper Panel**, **TRMNL**, or a **XIAO ESP32-C3 + Waveshare 7.5" V2** (see [Hardware](#hardware)).
 - Only for the features you want:
 
 | Feature | You need |
@@ -79,13 +79,34 @@ The panels don't care what brand your meter or thermostat is. If it shows up in 
 
 ### The displays
 
-| Device | Used for | Link |
-| --- | --- | --- |
-| **Seeed reTerminal E1003** | 10.3" touch e-ink panel with battery, buttons, buzzer and mic. The main panel | [Wiki](https://wiki.seeedstudio.com/getting_started_with_reterminal_e1003/) · [RobotShop](https://eu.robotshop.com/products/seeedstudio-reterminal-e1003-103-monochrome-epaper-display) |
-| **Seeed XIAO ESP32-C3** | Brains of the DIY panel | [The Pi Hut](https://thepihut.com/collections/new-products-maker/products/seeed-xiao-esp32c3) |
-| **Waveshare 7.5" e-Paper (V2, 800×480, black/white)** | Screen of the DIY panel | [Waveshare wiki](https://www.waveshare.com/wiki/7.5inch_e-Paper_HAT_Manual) |
+The reTerminal E Series is what this project is built around. They're ready-made, with a case, battery, buttons and ESPHome support out of the box, so there's no soldering and no 3D printing.
 
-Other reTerminal E-series models are listed on the [Seeed overview page](https://wiki.seeedstudio.com/reterminal_e10xx_main_page/). The E1003 is the one with touch, which the multi-page layout relies on.
+**Recommended: reTerminal E Series**
+
+| Device | What it is | Firmware | Link |
+| --- | --- | --- | --- |
+| **reTerminal E1003** ⭐ | 10.3" touch e-ink, 1872×1404, battery, buttons, buzzer and mic. The full multi-page panel | `reterminal-e1003-energy.yaml` | [Buy](https://www.seeedstudio.com/reTerminal-E1003-p-6731.html?sensecap_affiliate=rZDALM2&referring_service=link) · [With frame](https://www.seeedstudio.com/reTerminal-E1003-frame-bundle.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Wiki](https://wiki.seeedstudio.com/getting_started_with_reterminal_e1003/) |
+| **reTerminal E1001** | 7.5" monochrome e-ink, 800×480, battery and buttons | 800×480 single-page layout (`xiao-esp32-eink.yaml`) | [Buy](https://www.seeedstudio.com/reTerminal-E1001-p-6534.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Wiki](https://wiki.seeedstudio.com/getting_started_with_reterminal_e1001/) |
+| **reTerminal E1002** | 7.5" full-colour e-ink, 800×480, battery and buttons | 800×480 single-page layout (`xiao-esp32-eink.yaml`) | [Buy](https://www.seeedstudio.com/reTerminal-E1002-p-6533.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Wiki](https://wiki.seeedstudio.com/reterminal_e10xx_main_page/) |
+
+> The E1003 is the only one with touch, and the multi-page layout relies on it. The E1001 and E1002 run the 800×480 single-page layout from the DIY panel.
+>
+> **About the E1002:** the dashboards are designed in black and white and don't use colour. The E1002 works, but you're paying for colour you won't see, and colour panels take longer to refresh. Unless you want the colour for something else, go for the E1001.
+
+**Also supported (optional): other 7.5" panels**
+
+These have the same 800×480 resolution as the DIY panel, so they use the single-page layout too.
+
+| Device | What it is | Link |
+| --- | --- | --- |
+| **XIAO 7.5" ePaper Panel** | XIAO ESP32-C3 + 7.5" e-ink in a ready-made case with a battery | [Buy](https://www.seeedstudio.com/XIAO-7-5-ePaper-Panel-p-6416.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Wiki](https://wiki.seeedstudio.com/xiao_075inch_epaper_panel/) |
+| **TRMNL 7.5" (OG) DIY Kit** | 7.5" e-ink, driver board, XIAO and battery. Bring your own case | [Buy](https://www.seeedstudio.com/TRMNL-7-5-Inch-OG-DIY-Kit-p-6481.html?sensecap_affiliate=rZDALM2&referring_service=link) · [ESPHome wiki](https://wiki.seeedstudio.com/ogdiy_kit_works_with_esphome/) |
+| **TRMNL displays** | Ready-made 7.5" TRMNL e-ink devices, which can be flashed with ESPHome | [usetrmnl.com](https://usetrmnl.com/) |
+| **Seeed XIAO ESP32-C3 + Waveshare 7.5" V2** | My original DIY build | [XIAO ESP32-C3](https://www.seeedstudio.com/Seeed-XIAO-ESP32C3-p-5431.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Waveshare 7.5" e-Paper](https://www.waveshare.com/wiki/7.5inch_e-Paper_HAT_Manual) |
+
+> Each board wires the screen to different pins, and some use an ESP32-S3 instead of a C3. Before you install, check the `esp32:` board and the `display:` / `spi:` pins in `xiao-esp32-eink.yaml` against the ESPHome page in your device's wiki.
+
+*Links to seeedstudio.com are affiliate links. They cost you nothing extra and help support NotEnoughTech.*
 
 ### Weather
 
