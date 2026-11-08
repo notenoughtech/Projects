@@ -1,0 +1,80 @@
+{#- ── Alerts for every panel (the same text the E1003 used to work out itself) ──
+    heat_alert():  heating over its day / week / month limit (hours or £),
+                   e.g. "Heating 4h 30m today · limit 4h"
+    usage_alert(): electricity (grid import) or water over a day / week / month
+                   limit, e.g. "Water 540 L this week · limit 500 L"
+    Empty = all fine. 0 = that limit is off. -#}
+
+{%- macro _num_list(v) -%}
+  {%- if v is string -%}
+    {%- set ns = namespace(o=[]) -%}
+    {%- for x in (v | replace('[', '') | replace(']', '') | replace('(', '') | replace(')', '')).split(',') -%}
+      {%- if x | trim | is_number -%}{%- set ns.o = ns.o + [x | float] -%}{%- endif -%}
+    {%- endfor -%}
+    {{- ns.o | tojson -}}
+  {%- elif v is iterable -%}
+    {{- v | map('float', 0) | list | tojson -}}
+  {%- else -%}[]{%- endif -%}
+{%- endmacro -%}
+
+{%- macro _hm(h) -%}
+  {%- set m = (h * 60) | round(0) | int -%}
+  {%- if m < 60 -%}{{ m }}m{%- elif m % 60 == 0 -%}{{ m // 60 }}h{%- else -%}{{ m // 60 }}h {{ '%02d' | format(m % 60) }}m{%- endif -%}
+{%- endmacro -%}
+
+{%- macro heat_alert() -%}
+  {%- set d = states('sensor.heating_on_today') | float(none) -%}
+  {%- set w = states('sensor.heating_on_this_week') | float(none) -%}
+  {%- set c = states('input_number.heating_cost_per_hour') | float(0) -%}
+  {%- set budget = is_state('input_select.heating_limit_by', 'Budget') -%}
+  {%- set lim = namespace(dh=states('input_number.heating_limit_day_hours') | float(0),
+                          wh=states('input_number.heating_limit_week_hours') | float(0),
+                          mh=states('input_number.heating_limit_month_hours') | float(0),
+                          dc=states('input_number.heating_limit_day_cost') | float(0),
+                          wc=states('input_number.heating_limit_week_cost') | float(0),
+                          mc=states('input_number.heating_limit_month_cost') | float(0)) -%}
+  {%- set months = _num_list(state_attr('sensor.panel_heating_history', 'monthly')) | from_json -%}
+  {%- set mh = months[-1] if months else none -%}
+  {%- if not budget -%}
+    {%- if d is not none and lim.dh > 0 and d > lim.dh -%}Heating {{ _hm(d) }} today · limit {{ _hm(lim.dh) }}
+    {%- elif w is not none and lim.wh > 0 and w > lim.wh -%}Heating {{ _hm(w) }} this week · limit {{ _hm(lim.wh) }}
+    {%- elif mh is not none and lim.mh > 0 and mh > lim.mh -%}Heating {{ _hm(mh) }} this month · limit {{ _hm(lim.mh) }}
+    {%- endif -%}
+  {%- else -%}
+    {%- if d is not none and lim.dc > 0 and d * c > lim.dc -%}Heating £{{ '%.2f' | format(d * c) }} today · budget £{{ '%.2f' | format(lim.dc) }}
+    {%- elif w is not none and lim.wc > 0 and w * c > lim.wc -%}Heating £{{ '%.2f' | format(w * c) }} this week · budget £{{ '%.2f' | format(lim.wc) }}
+    {%- elif mh is not none and lim.mc > 0 and mh * c > lim.mc -%}Heating £{{ '%.0f' | format(mh * c) }} this month · budget £{{ '%.0f' | format(lim.mc) }}
+    {%- endif -%}
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- one utility: today, this week (from Monday), this month; '' when fine -#}
+{%- macro _usage(name, today, last7, months, lims, fmt, unit) -%}
+  {%- if today is not none -%}
+    {%- set v7 = (_num_list(last7) | from_json + [0] * 7)[:7] -%}
+    {%- set mo = _num_list(months) | from_json -%}
+    {%- set dow = now().weekday() -%}
+    {%- set week = today + (v7[6 - dow:6] | sum) -%}
+    {%- set month = [mo[-1], today] | max if mo else none -%}
+    {%- set ns = namespace(out='') -%}
+    {%- for v, l, when in [(today, lims[0], 'today'), (week, lims[1], 'this week'), (month, lims[2], 'this month')] -%}
+      {%- if not ns.out and l > 0 and v is not none and v > l -%}
+        {%- set ns.out = name ~ ' ' ~ (fmt | format(v)) ~ unit ~ ' ' ~ when ~ ' · limit ' ~ (fmt | format(l)) ~ unit -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {{- ns.out -}}
+  {%- endif -%}
+{%- endmacro -%}
+
+{%- macro usage_alert() -%}
+  {%- set p = _usage('Power', states('sensor.grid_import_today') | float(none),
+        state_attr('sensor.panel_energy_daily', 'last7_imp'), state_attr('sensor.panel_energy_monthly', 'imp'),
+        [states('input_number.energy_alert_day_kwh') | float(0), states('input_number.energy_alert_week_kwh') | float(0),
+         states('input_number.energy_alert_month_kwh') | float(0)], '%.1f', ' kWh') -%}
+  {%- if p -%}{{ p }}{%- else -%}
+    {{- _usage('Water', states('sensor.panel_water_today') | float(none),
+        state_attr('sensor.panel_water_history', 'last7'), state_attr('sensor.panel_water_history', 'monthly'),
+        [states('input_number.water_alert_day_litres') | float(0), states('input_number.water_alert_week_litres') | float(0),
+         states('input_number.water_alert_month_litres') | float(0)], '%.0f', ' L') -}}
+  {%- endif -%}
+{%- endmacro -%}

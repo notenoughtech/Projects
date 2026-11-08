@@ -71,6 +71,22 @@ input_number:
     unit_of_measurement: "£"
     mode: box
     icon: mdi:cash-lock
+  heating_limit_month_hours:          # 0 = no monthly alert
+    name: "Heating Limit per Month (hours)"
+    min: 0
+    max: 744
+    step: 5
+    unit_of_measurement: "h"
+    mode: box
+    icon: mdi:timer-lock-outline
+  heating_limit_month_cost:
+    name: "Heating Budget per Month"
+    min: 0
+    max: 1000
+    step: 5
+    unit_of_measurement: "£"
+    mode: box
+    icon: mdi:cash-lock
 
 # Heating alert: limit run time (hours) or spend (£)
 input_select:
@@ -285,6 +301,62 @@ sensor:
 
 automation:
 
+  # Boiler switched by hand (a wall switch, the relay's own button, the app or a
+  # dashboard) → the thermostat follows, so it shows what the boiler is really doing
+  # and doesn't undo it on the next temperature reading:
+  #   switched ON  while the thermostat is off, or already warm enough
+  #       → thermostat to Heat, target raised to just above the room (a boost)
+  #   switched OFF while the thermostat still wants heat
+  #       → thermostat Off
+  # The thermostat's own on/off never matches these, so it's left alone.
+  - id: heating_follow_boiler_switch
+    alias: "Heating – thermostat follows the boiler switch"
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: *boiler_relay
+        from: ["on", "off"]
+        to: ["on", "off"]
+    variables:
+      thermostat: *thermostat
+      mode: "{{ states(thermostat) }}"
+      cur: "{{ state_attr(thermostat, 'current_temperature') | float(none) }}"
+      tgt: "{{ state_attr(thermostat, 'temperature') | float(none) }}"
+      step: "{{ state_attr(thermostat, 'target_temp_step') | float(0.5) }}"
+    actions:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >
+                  {{ trigger.to_state.state == 'on'
+                     and (mode == 'off' or (cur is number and tgt is number and cur >= tgt)) }}
+            sequence:
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: "{{ thermostat }}"
+                data:
+                  hvac_mode: heat
+              - if:
+                  - condition: template
+                    value_template: "{{ cur is number and (tgt is not number or cur >= tgt) }}"
+                then:
+                  - action: climate.set_temperature
+                    target:
+                      entity_id: "{{ thermostat }}"
+                    data:
+                      temperature: "{{ ((cur + 0.5) / step) | round(0, 'ceil') * step }}"
+          - conditions:
+              - condition: template
+                value_template: >
+                  {{ trigger.to_state.state == 'off' and mode == 'heat'
+                     and cur is number and tgt is number and cur < tgt }}
+            sequence:
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: "{{ thermostat }}"
+                data:
+                  hvac_mode: "off"
+
   # Panel → thermostat: picking a target (or a new leading room) on the panel
   # sets your thermostat to it
   - id: heating_follow_leading_room
@@ -333,8 +405,12 @@ automation:
           area: "{{ state_attr('sensor.panel_heating_state', 'lead') }}"
           value: "{{ trigger.to_state.attributes.temperature }}"
       - delay: 2
-      - action: "esphome.{{ panel }}_refresh"       # redraw now, not within a minute
-        continue_on_error: true
+      - if:                                    # redraw now, not within a minute (when there's an E1003)
+          - condition: template
+            value_template: "{{ integration_entities('esphome') | select('search', '\\.' ~ panel ~ '_') | list | count > 0 }}"
+        then:
+          - action: "esphome.{{ panel }}_refresh"
+            continue_on_error: true
 
 
 # ── VOICE (sentences in custom_sentences/en/panel.yaml) ─────────────────────
@@ -351,9 +427,13 @@ intent_script:
         data:
           hvac_mode: "{{ heat_mode }}"
       - delay: 2
-      - action: "esphome.{{ panel }}_show_page"
-        data:
-          name: heating
+      - if:                                    # only when that panel exists (no E1003: skip)
+          - condition: template
+            value_template: "{{ integration_entities('esphome') | select('search', '\\.' ~ panel ~ '_') | list | count > 0 }}"
+        then:
+        - action: "esphome.{{ panel }}_show_page"
+          data:
+            name: heating
     speech:
       text: "Heating {{ 'on' if heat_mode == 'heat' else 'off' }}"
 
@@ -371,9 +451,13 @@ intent_script:
           area: "{{ lead }}"
           value: "{{ temperature }}"
       - delay: 3
-      - action: "esphome.{{ panel }}_show_page"
-        data:
-          name: heating
+      - if:                                    # only when that panel exists (no E1003: skip)
+          - condition: template
+            value_template: "{{ integration_entities('esphome') | select('search', '\\.' ~ panel ~ '_') | list | count > 0 }}"
+        then:
+        - action: "esphome.{{ panel }}_show_page"
+          data:
+            name: heating
     speech:
       text: >
         {% set lead = state_attr('sensor.panel_rooms', 'lead') or '' %}

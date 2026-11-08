@@ -21,25 +21,178 @@ homeassistant:
       friendly_name: "Panel settings"
       icon: mdi:cog
 
-# ── DIY panel settings (it has no touch screen, so they live here) ─────────
-# Refresh: anything but "Every minute" lets the DIY panel deep-sleep between
-# refreshes (much less power). "Stay awake" keeps it on, e.g. to install an
-# update from ESPHome. Card change: how often its rotating card moves on.
+# ── Settings for the panels without a touch screen (they live here) ─────────
+# One set per panel: DIY (XIAO + Waveshare), reTerminal E1001, reTerminal E1002
+# and the TRMNL (OG or DIY kit). Refresh: anything but "Every minute" lets the panel
+# deep-sleep between refreshes (much less power). "Stay awake" keeps it on, e.g.
+# to install an update from ESPHome. Card change: how often the rotating card
+# moves on. Keep the option wording – the panels read the numbers from it.
+# Panels you don't have: delete their lines (and their rows in panels-card.yaml).
 input_select:
   diy_panel_refresh:
     name: "DIY panel refresh"
     icon: mdi:timer-sync-outline
-    options: ["Every minute (always on)", "Every 5 min", "Every 10 min", "Every 15 min",
-              "Every 30 min", "Every hour", "Every 2 hours"]
+    options: &refresh_opts ["Every minute (always on)", "Every 5 min", "Every 10 min", "Every 15 min",
+                            "Every 30 min", "Every hour", "Every 2 hours"]
   diy_panel_card_change:
     name: "DIY panel card change"
     icon: mdi:view-carousel-outline
-    options: ["Every 5 min", "Every minute", "Every 2 min", "Every 10 min", "Every 15 min", "Every 30 min"]
+    options: &card_opts ["Every 5 min", "Every minute", "Every 2 min", "Every 10 min", "Every 15 min", "Every 30 min"]
+  e1001_panel_refresh:
+    name: "E1001 panel refresh"
+    icon: mdi:timer-sync-outline
+    options: *refresh_opts
+  e1001_panel_card_change:
+    name: "E1001 panel card change"
+    icon: mdi:view-carousel-outline
+    options: *card_opts
+  e1002_panel_refresh:
+    name: "E1002 panel refresh"
+    icon: mdi:timer-sync-outline
+    options: *refresh_opts
+  e1002_panel_card_change:
+    name: "E1002 panel card change"
+    icon: mdi:view-carousel-outline
+    options: *card_opts
+  # Colour e-ink can't refresh part of the screen: each redraw flashes it for ~20 s.
+  # While awake the E1002 redraws this often (sooner when an alert appears or clears).
+  e1002_panel_redraw:
+    name: "E1002 panel redraw (awake)"
+    icon: mdi:palette-swatch-outline
+    initial: "Every 10 min"
+    options: ["Every 5 min", "Every 10 min", "Every 15 min", "Every 30 min", "Every hour"]
+  trmnl_panel_refresh:
+    name: "TRMNL panel refresh"
+    icon: mdi:timer-sync-outline
+    options: *refresh_opts
+  trmnl_panel_card_change:
+    name: "TRMNL panel card change"
+    icon: mdi:view-carousel-outline
+    options: *card_opts
 
 input_boolean:
   diy_panel_stay_awake:
     name: "DIY panel stay awake"
     icon: mdi:sleep-off
+  e1001_panel_stay_awake:
+    name: "E1001 panel stay awake"
+    icon: mdi:sleep-off
+  e1002_panel_stay_awake:
+    name: "E1002 panel stay awake"
+    icon: mdi:sleep-off
+  trmnl_panel_stay_awake:
+    name: "TRMNL panel stay awake"
+    icon: mdi:sleep-off
+  diy_panel_night_sleep:
+    name: "DIY panel night sleep"
+    icon: mdi:weather-night
+  e1001_panel_night_sleep:
+    name: "E1001 panel night sleep"
+    icon: mdi:weather-night
+  e1002_panel_night_sleep:
+    name: "E1002 panel night sleep"
+    icon: mdi:weather-night
+  trmnl_panel_night_sleep:
+    name: "TRMNL panel night sleep"
+    icon: mdi:weather-night
+
+# Night sleep hours (the panels wake again at "until"; a button wakes them for 5 min)
+input_datetime:
+  diy_panel_night_from:
+    name: "DIY panel night sleep from"
+    icon: mdi:bed-clock
+    has_date: false
+    has_time: true
+  diy_panel_night_to:
+    name: "DIY panel night sleep until"
+    icon: mdi:alarm
+    has_date: false
+    has_time: true
+  e1001_panel_night_from:
+    name: "E1001 panel night sleep from"
+    icon: mdi:bed-clock
+    has_date: false
+    has_time: true
+  e1001_panel_night_to:
+    name: "E1001 panel night sleep until"
+    icon: mdi:alarm
+    has_date: false
+    has_time: true
+  e1002_panel_night_from:
+    name: "E1002 panel night sleep from"
+    icon: mdi:bed-clock
+    has_date: false
+    has_time: true
+  e1002_panel_night_to:
+    name: "E1002 panel night sleep until"
+    icon: mdi:alarm
+    has_date: false
+    has_time: true
+  trmnl_panel_night_from:
+    name: "TRMNL panel night sleep from"
+    icon: mdi:bed-clock
+    has_date: false
+    has_time: true
+  trmnl_panel_night_to:
+    name: "TRMNL panel night sleep until"
+    icon: mdi:alarm
+    has_date: false
+    has_time: true
+
+# ── Usage alerts (alarms): electricity and water, per day / week / month ─────────
+# 0 = off. Go over one and every panel shows a chip in the top bar; Home Assistant
+# works it out (sensor.panel_usage_alert) – use it for your own notifications too.
+# Kept in sync with the E1003's Settings → Alerts (change it on either side).
+# Set them on the prices card (cards/prices-card.yaml).
+input_number:
+  energy_alert_day_kwh:
+    name: "Electricity Alert per Day"
+    min: 0
+    max: 100
+    step: 0.5
+    unit_of_measurement: "kWh"
+    mode: box
+    icon: mdi:flash-alert
+  energy_alert_week_kwh:
+    name: "Electricity Alert per Week"
+    min: 0
+    max: 500
+    step: 2
+    unit_of_measurement: "kWh"
+    mode: box
+    icon: mdi:flash-alert
+  energy_alert_month_kwh:
+    name: "Electricity Alert per Month"
+    min: 0
+    max: 2000
+    step: 10
+    unit_of_measurement: "kWh"
+    mode: box
+    icon: mdi:flash-alert
+  water_alert_day_litres:
+    name: "Water Alert per Day"
+    min: 0
+    max: 2000
+    step: 10
+    unit_of_measurement: "L"
+    mode: box
+    icon: mdi:water-alert
+  water_alert_week_litres:
+    name: "Water Alert per Week"
+    min: 0
+    max: 10000
+    step: 50
+    unit_of_measurement: "L"
+    mode: box
+    icon: mdi:water-alert
+  water_alert_month_litres:
+    name: "Water Alert per Month"
+    min: 0
+    max: 50000
+    step: 250
+    unit_of_measurement: "L"
+    mode: box
+    icon: mdi:water-alert
 
 template:
 
@@ -100,7 +253,20 @@ template:
   # ───── ROOMS straight from your Home Assistant areas (heating + plants) ─────
   # The logic lives in custom_templates/panel_rooms.jinja (see the notes there).
   # rooms = "area_id|name|temp|hum|co2|pm25|voc|voc_unit|lux|target|pinned;…"
-  - sensor:
+  # Updated once a minute (and when the panel changes something), not on every sensor
+  # reading: it goes through every area, and room sensors report every few seconds.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: state
+        entity_id: sensor.panel_heating_state
+      - trigger: event
+        event_type: esphome.panel_heating
+    sensor:
       - name: "Panel Rooms"
         unique_id: panel_rooms
         icon: mdi:home-thermometer
@@ -121,6 +287,34 @@ template:
           lead_temp: "{% from 'panel_rooms.jinja' import panel_stat %}{{ panel_stat('lead_temp') }}"
 
 
+  # ───── BILLS: one set of figures for every panel (custom_templates/panel_bills.jinja) ─────
+  # £ per day, last 7 days, oldest first and today last, standing charges included.
+  # The panels draw Bills Today and the 7-day bills from this, so they always agree.
+  - sensor:
+      - name: "Panel Bills"
+        unique_id: panel_bills
+        icon: mdi:cash-multiple
+        unit_of_measurement: "£"
+        state: "{% from 'panel_bills.jinja' import bill_today %}{{ bill_today() }}"
+        attributes:
+          power: "{% from 'panel_bills.jinja' import bill_days %}{{ bill_days('power') }}"
+          water: "{% from 'panel_bills.jinja' import bill_days %}{{ bill_days('water') }}"
+          heating: "{% from 'panel_bills.jinja' import bill_days %}{{ bill_days('heating') }}"
+
+  # ───── ALERTS: one text for every panel (custom_templates/panel_alerts.jinja) ─────
+  # Empty = all fine, else e.g. "Heating 4h 30m today · limit 4h" / "Water 540 L this week · limit 500 L".
+  # Limits: the heating_limit_* and *_alert_* helpers (prices card, or the E1003's Settings).
+  # Use them in your own notifications too (trigger: state, not to "").
+  - sensor:
+      - name: "Panel Heating Alert"
+        unique_id: panel_heating_alert
+        icon: mdi:radiator
+        state: "{% from 'panel_alerts.jinja' import heat_alert %}{{ heat_alert() | trim }}"
+      - name: "Panel Usage Alert"
+        unique_id: panel_usage_alert
+        icon: mdi:alert-circle-outline
+        state: "{% from 'panel_alerts.jinja' import usage_alert %}{{ usage_alert() | trim }}"
+
 # ── VOICE: "show heating / plants / agenda / main" (custom_sentences/en/panel.yaml) ────
 
 # The reTerminal needs "Allow the device to perform Home Assistant actions"
@@ -131,9 +325,13 @@ intent_script:
     action:
       - variables:
           panel: *panel_device
-      - action: "esphome.{{ panel }}_show_page"
-        data:
-          name: "{{ panel_page }}"
+      - if:                                    # only when that panel exists (no E1003: skip)
+          - condition: template
+            value_template: "{{ integration_entities('esphome') | select('search', '\\.' ~ panel ~ '_') | list | count > 0 }}"
+        then:
+        - action: "esphome.{{ panel }}_show_page"
+          data:
+            name: "{{ panel_page }}"
     speech:
       text: "Showing {{ panel_page }}"
 
@@ -156,6 +354,7 @@ recorder:
       - sensor.panel_lights
       - sensor.panel_lights_settings
       - sensor.panel_plants
+      - sensor.panel_plants_needing_water
       - sensor.weather_forecast_3h
       - sensor.panel_energy_settings
       - sensor.panel_water_settings

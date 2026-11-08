@@ -1,14 +1,22 @@
 # Plants card for a Home Assistant dashboard
 # Dashboard → ⋮ Edit → + Add card → Manual → paste all of this.
-# Per plant: name ("-" hides it), icon, room, glass size and days per glass.
-# Changes reach the reTerminal within a few seconds; the room also changes
-# when you long-press a plant on the reTerminal.
+# Home Assistant keeps every plant's water (packages/panel_plants.yaml), so all
+# panels – with or without the E1003 – show the same levels. Per plant: name
+# ("-" hides it), icon, room, glass size, days per glass, water left and a
+# "Water" button (one glass). The room also changes when you long-press a plant
+# on the reTerminal E1003, and watering there counts here too.
 type: vertical-stack
 cards:
   - type: markdown
     content: >-
       **Plants** · name `-` hides a plant on the panels ·
-      {{ states('sensor.panel_plants') }} plants placed in rooms
+      {{ states('sensor.panel_plants') }} plants placed in rooms ·
+      {% set n = states('sensor.panel_plants_needing_water') | int(0) %}
+      {{ '**' ~ n ~ ' need water**' if n else 'all watered' }}
+
+      {% for p in (state_attr('sensor.panel_plants_needing_water', 'plants') or [] | list) | sort(attribute='left') %}
+      {{- '\n' }}{{ '💧' if p.left < states('input_number.plant_warning_days') | float(1) else '🌱' }} {{ p.name }} – {{ p.left }} d · {{ p.pct | int }} %
+      {%- endfor %}
   - type: grid
     columns: 3
     square: false
@@ -27,6 +35,17 @@ cards:
             name: Glass
           - entity: input_number.plant_1_days
             name: Days per glass
+          - entity: input_number.plant_1_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 1
       - type: entities
         title: Plant 2
         state_color: false
@@ -41,6 +60,17 @@ cards:
             name: Glass
           - entity: input_number.plant_2_days
             name: Days per glass
+          - entity: input_number.plant_2_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 2
       - type: entities
         title: Plant 3
         state_color: false
@@ -55,6 +85,17 @@ cards:
             name: Glass
           - entity: input_number.plant_3_days
             name: Days per glass
+          - entity: input_number.plant_3_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 3
       - type: entities
         title: Plant 4
         state_color: false
@@ -69,6 +110,17 @@ cards:
             name: Glass
           - entity: input_number.plant_4_days
             name: Days per glass
+          - entity: input_number.plant_4_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 4
       - type: entities
         title: Plant 5
         state_color: false
@@ -83,6 +135,17 @@ cards:
             name: Glass
           - entity: input_number.plant_5_days
             name: Days per glass
+          - entity: input_number.plant_5_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 5
       - type: entities
         title: Plant 6
         state_color: false
@@ -97,6 +160,17 @@ cards:
             name: Glass
           - entity: input_number.plant_6_days
             name: Days per glass
+          - entity: input_number.plant_6_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 6
       - type: entities
         title: Plant 7
         state_color: false
@@ -111,6 +185,17 @@ cards:
             name: Glass
           - entity: input_number.plant_7_days
             name: Days per glass
+          - entity: input_number.plant_7_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 7
       - type: entities
         title: Plant 8
         state_color: false
@@ -125,6 +210,17 @@ cards:
             name: Glass
           - entity: input_number.plant_8_days
             name: Days per glass
+          - entity: input_number.plant_8_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 8
       - type: entities
         title: Plant 9
         state_color: false
@@ -139,6 +235,17 @@ cards:
             name: Glass
           - entity: input_number.plant_9_days
             name: Days per glass
+          - entity: input_number.plant_9_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 9
       - type: entities
         title: Plant 10
         state_color: false
@@ -153,6 +260,17 @@ cards:
             name: Glass
           - entity: input_number.plant_10_days
             name: Days per glass
+          - entity: input_number.plant_10_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 10
       - type: entities
         title: Plant 11
         state_color: false
@@ -167,6 +285,17 @@ cards:
             name: Glass
           - entity: input_number.plant_11_days
             name: Days per glass
+          - entity: input_number.plant_11_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 11
       - type: entities
         title: Plant 12
         state_color: false
@@ -181,6 +310,17 @@ cards:
             name: Glass
           - entity: input_number.plant_12_days
             name: Days per glass
+          - entity: input_number.plant_12_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 12
       - type: entities
         title: Plant 13
         state_color: false
@@ -195,6 +335,17 @@ cards:
             name: Glass
           - entity: input_number.plant_13_days
             name: Days per glass
+          - entity: input_number.plant_13_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 13
       - type: entities
         title: Plant 14
         state_color: false
@@ -209,6 +360,17 @@ cards:
             name: Glass
           - entity: input_number.plant_14_days
             name: Days per glass
+          - entity: input_number.plant_14_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 14
       - type: entities
         title: Plant 15
         state_color: false
@@ -223,11 +385,28 @@ cards:
             name: Glass
           - entity: input_number.plant_15_days
             name: Days per glass
+          - entity: input_number.plant_15_level
+            name: Water left
+          - type: button
+            name: Water
+            icon: mdi:watering-can
+            action_name: 1 glass
+            tap_action:
+              action: perform-action
+              perform_action: script.panel_water_plant
+              data:
+                plant: 15
   - type: entities
     title: All plants
     entities:
+      - entity: input_number.plant_reservoir_glasses
+        name: Reservoir (glasses)
+      - entity: input_number.plant_warning_days
+        name: Warn when less than (days)
       - entity: input_number.plant_water_multiplier
         name: Water multiplier
+      - entity: sensor.panel_plants_needing_water
+        name: Need water now
       - entity: sensor.panel_floor_temperatures
         name: House average
       - entity: input_button.plants_load_samples

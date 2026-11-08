@@ -1,11 +1,12 @@
 # reTerminal E-ink Panels for Home Assistant
 
-Two e-ink dashboards for Home Assistant, built with ESPHome:
+E-ink dashboards for Home Assistant, built with ESPHome:
 
 - **reTerminal E1003** – Seeed's 10.3" touch e-ink panel with five pages: Home, Energy, Heating, Lights and Agenda, plus Plants and Settings.
-- **DIY panel** – a XIAO ESP32-C3 with a Waveshare 7.5" e-ink screen. It shows the same data on a single page with rotating cards.
+- **reTerminal E1002 (colour)** – the single-page layout on Seeed's 7.3" colour e-ink, with one colour per utility: power black, water blue, heating red, solar green.
+- **DIY panel** – a XIAO ESP32-C3 with a Waveshare 7.5" e-ink screen. The same single page in black and white, with rotating cards.
 
-Both panels show energy, solar, water, heating, plants, calendar and tasks. The E1003 adds smart controls for your lights and devices. Each feature is a separate Home Assistant package: install only what you use and delete the rest.
+All of them show energy, solar, water, heating, plants, calendar and tasks. The E1003 adds smart controls for your lights and devices. Each feature is a separate Home Assistant package: install only what you use and delete the rest.
 
 ![reTerminal E1003 – Home](images/e1003-home.png)
 
@@ -25,10 +26,12 @@ Both panels show energy, solar, water, heating, plants, calendar and tasks. The 
 8. [Using the reTerminal](#using-the-reterminal)
 9. [Feature guides](#feature-guides) – [Weather](#weather) · [Energy](#energy) · [Solar](#solar) · [Water](#water) · [Heating](#heating) · [Plants](#plants) · [Tasks and calendar](#tasks-and-calendar) · [Smart controls](#smart-controls) · [Settings](#settings)
 10. [The DIY panel](#the-diy-panel)
-11. [Voice commands](#voice-commands)
-12. [Troubleshooting](#troubleshooting)
-13. [Updating](#updating)
-14. [Coming next](#coming-next)
+11. [The colour panel (reTerminal E1002)](#the-colour-panel-reterminal-e1002)
+12. [reTerminal E1001 and TRMNL](#reterminal-e1001-and-trmnl)
+13. [Voice commands](#voice-commands)
+14. [Troubleshooting](#troubleshooting)
+15. [Updating](#updating)
+16. [Coming next](#coming-next)
 
 ---
 
@@ -42,6 +45,7 @@ Both panels show energy, solar, water, heating, plants, calendar and tasks. The 
 | ![Lights](images/e1003-lights.png) | **Lights** – a card per room with Main and Mood lights (30 / 50 / 100 %), up to 3 devices, and the room's sensors. An All lights switch sits at the top. Works both ways. |
 | ![Agenda](images/e1003-agenda.png) | **Agenda** – 7 days from all your calendars, and your open tasks. Tick tasks off on the panel. |
 | ![Plants](images/e1003-plants.png) | **Plants** – up to 15 plants with virtual reservoirs that empty faster in warm rooms. Tap to water. |
+| ![Colour panel](images/e1002-color-plants.png) | **Colour panel (E1002)** – the single-page layout in colour, one colour per utility: power black, water blue, heating red, solar green. |
 | ![DIY panel](images/diy-home.png) | **DIY panel** – the same data on one 800×480 screen, with rotating cards and deep sleep between refreshes. |
 
 ---
@@ -51,6 +55,8 @@ Both panels show energy, solar, water, heating, plants, calendar and tasks. The 
 ![How it fits together](images/architecture.png)
 
 Home Assistant does the heavy lifting. Each `packages/panel_*.yaml` reads your own entities from its **YOUR SETTINGS** block and turns them into a handful of `sensor.panel_*` sensors. The panels subscribe to those sensors over the ESPHome API, so they don't need to know your meter, inverter or thermostat. Taps on the reTerminal go back as Home Assistant events and actions, and the automations in the packages handle them.
+
+**Every panel works on its own.** Home Assistant keeps every setting and every piece of state the panels share: plant water levels and their drinking, the reservoir and warning sizes, the heating, electricity and water limits, the alerts, bills, night sleep and refresh times. You don't need an E1003: a DIY, E1001, E1002 or TRMNL panel on its own shows everything, and several panels always agree. The E1003 is simply a touch screen onto the same helpers. Anything you change in its Settings is written back to Home Assistant.
 
 ---
 
@@ -86,12 +92,12 @@ The reTerminal E Series is what this project is built around. They're ready-made
 | Device | What it is | Firmware | Link |
 | --- | --- | --- | --- |
 | **reTerminal E1003** ⭐ | 10.3" touch e-ink, 1872×1404, battery, buttons, buzzer and mic. The full multi-page panel | `reterminal-e1003-energy.yaml` | [Buy](https://www.seeedstudio.com/reTerminal-E1003-p-6731.html?sensecap_affiliate=rZDALM2&referring_service=link) · [With frame](https://www.seeedstudio.com/reTerminal-E1003-frame-bundle.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Wiki](https://wiki.seeedstudio.com/getting_started_with_reterminal_e1003/) |
-| **reTerminal E1001** | 7.5" monochrome e-ink, 800×480, battery and buttons | 800×480 single-page layout (`xiao-esp32-eink.yaml`) | [Buy](https://www.seeedstudio.com/reTerminal-E1001-p-6534.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Wiki](https://wiki.seeedstudio.com/getting_started_with_reterminal_e1001/) |
-| **reTerminal E1002** | 7.5" full-colour e-ink, 800×480, battery and buttons | 800×480 single-page layout (`xiao-esp32-eink.yaml`) | [Buy](https://www.seeedstudio.com/reTerminal-E1002-p-6533.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Wiki](https://wiki.seeedstudio.com/reterminal_e10xx_main_page/) |
+| **reTerminal E1001** | 7.5" monochrome e-ink, 800×480, battery and buttons | Single-page layout (`reterminal-e1001.yaml`) | [Buy](https://www.seeedstudio.com/reTerminal-E1001-p-6534.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Wiki](https://wiki.seeedstudio.com/getting_started_with_reterminal_e1001/) |
+| **reTerminal E1002** | 7.3" colour e-ink (Spectra 6), 800×480, battery and buttons | Colour single-page layout (`reterminal-e1002-color.yaml`) | [Buy](https://www.seeedstudio.com/reTerminal-E1002-p-6533.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Wiki](https://wiki.seeedstudio.com/reterminal_e10xx_main_page/) |
 
-> The E1003 is the only one with touch, and the multi-page layout relies on it. The E1001 and E1002 run the 800×480 single-page layout from the DIY panel.
+> The E1003 is the only one with touch, and the multi-page layout relies on it. The E1001 and E1002 run the 800×480 single-page layout.
 >
-> **About the E1002:** the dashboards are designed in black and white and don't use colour. The E1002 works, but you're paying for colour you won't see, and colour panels take longer to refresh. Unless you want the colour for something else, go for the E1001.
+> **E1001 or E1002?** The E1002 has its own [colour version](#the-colour-panel-reterminal-e1002) of the layout, ready to install. Colour e-ink takes about 20 seconds per refresh, against a few seconds for black and white. For a panel that sleeps between refreshes that doesn't matter, but if you want it updating every minute, the E1001 is the better pick.
 
 **Also supported (optional): other 7.5" panels**
 
@@ -100,11 +106,11 @@ These have the same 800×480 resolution as the DIY panel, so they use the single
 | Device | What it is | Link |
 | --- | --- | --- |
 | **XIAO 7.5" ePaper Panel** | XIAO ESP32-C3 + 7.5" e-ink in a ready-made case with a battery | [Buy](https://www.seeedstudio.com/XIAO-7-5-ePaper-Panel-p-6416.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Wiki](https://wiki.seeedstudio.com/xiao_075inch_epaper_panel/) |
-| **TRMNL 7.5" (OG) DIY Kit** | 7.5" e-ink, driver board, XIAO and battery. Bring your own case | [Buy](https://www.seeedstudio.com/TRMNL-7-5-Inch-OG-DIY-Kit-p-6481.html?sensecap_affiliate=rZDALM2&referring_service=link) · [ESPHome wiki](https://wiki.seeedstudio.com/ogdiy_kit_works_with_esphome/) |
-| **TRMNL displays** | Ready-made 7.5" TRMNL e-ink devices, which can be flashed with ESPHome | [usetrmnl.com](https://usetrmnl.com/) |
+| **TRMNL 7.5" (OG) DIY Kit** | 7.5" e-ink, driver board, XIAO ESP32-S3 Plus and battery. Bring your own case. Ready-made firmware: `trmnl-7in5-diy.yaml` | [Buy](https://www.seeedstudio.com/TRMNL-7-5-Inch-OG-DIY-Kit-p-6481.html?sensecap_affiliate=rZDALM2&referring_service=link) · [ESPHome wiki](https://wiki.seeedstudio.com/ogdiy_kit_works_with_esphome/) |
+| **TRMNL (OG)** | TRMNL's own ready-made 7.5" e-ink display (ESP32-C3). Replaces TRMNL's firmware with ESPHome. Ready-made firmware: `trmnl-og.yaml` | [usetrmnl.com](https://usetrmnl.com/) |
 | **Seeed XIAO ESP32-C3 + Waveshare 7.5" V2** | My original DIY build | [XIAO ESP32-C3](https://www.seeedstudio.com/Seeed-XIAO-ESP32C3-p-5431.html?sensecap_affiliate=rZDALM2&referring_service=link) · [Waveshare 7.5" e-Paper](https://www.waveshare.com/wiki/7.5inch_e-Paper_HAT_Manual) |
 
-> Each board wires the screen to different pins, and some use an ESP32-S3 instead of a C3. Before you install, check the `esp32:` board and the `display:` / `spi:` pins in `xiao-esp32-eink.yaml` against the ESPHome page in your device's wiki.
+> **Ready-made firmware:** the reTerminal E1001, the reTerminal E1002, the TRMNL DIY Kit and the TRMNL OG each have their own YAML with the right board, screen pins, battery reading and a refresh button. The XIAO 7.5" ePaper Panel and newer TRMNL models don't have one yet. Start from `xiao-esp32-eink.yaml` and check the `esp32:` board and the `display:` / `spi:` pins against the ESPHome page in your device's wiki.
 
 *Links to seeedstudio.com are affiliate links. They cost you nothing extra and help support NotEnoughTech.*
 
@@ -202,15 +208,20 @@ homeassistant/
 │   ├── panel_rooms.jinja       rooms from areas (heating, plants, lights)
 │   ├── panel_stats.jinja       hourly / daily / monthly statistics
 │   ├── panel_plants.jinja      plant table and room temperatures
+│   ├── panel_bills.jinja       £ per day for every panel (Bills Today, 7-day bills)
 │   └── panel_sun.jinja         daylight and cloud score for the solar strip
 ├── custom_sentences/en/
 │   └── panel.yaml              voice commands
 └── cards/                      dashboard cards to paste in (not loaded by HA)
     ├── prices-card.yaml        energy, water and heating prices and limits
     ├── plants-card.yaml        plant names, icons, rooms, watering
-    └── panels-card.yaml        DIY panel refresh, card change, stay awake
+    └── panels-card.yaml        every panel: status, battery, refresh, card change, stay awake
 esphome/
 ├── reterminal-e1003-energy.yaml
+├── reterminal-e1001.yaml        reTerminal E1001 (black and white)
+├── reterminal-e1002-color.yaml  reTerminal E1002 (colour)
+├── trmnl-7in5-diy.yaml          TRMNL 7.5" (OG) DIY Kit
+├── trmnl-og.yaml                TRMNL OG (TRMNL's own device)
 └── xiao-esp32-eink.yaml
 ```
 
@@ -257,9 +268,9 @@ New packages and new `.jinja` files need a full restart. A template reload won't
 
 Go to Dashboard → ⋮ → Edit → **+ Add card** → **Manual**, and paste in each file from `cards/`:
 
-- `prices-card.yaml` – electricity price and standing charge, water tariff, boiler cost per hour and heating limits.
-- `plants-card.yaml` – name, icon, room, glass size and days per glass for each plant.
-- `panels-card.yaml` – the DIY panel's refresh rate, card change and stay awake.
+- `prices-card.yaml` – electricity price and standing charge, water tariff, boiler cost per hour, and the alerts: electricity (kWh) and water (litres) per day, week and month, heating time or budget per day, week and month, plus an "Alerts now" row. These helpers drive every panel. If you have an E1003, its Settings → Alerts stays in sync with them.
+- `plants-card.yaml` – name, icon, room, glass size, days per glass, water left and a **Water** button for each plant, plus the reservoir size and warning for all of them, and a list of the thirstiest.
+- `panels-card.yaml` – all your panels in one card: Wi-Fi, battery, room temperature and when each last checked in, plus refresh rate, card change and stay awake for every panel without a touch screen. Delete the blocks for panels you don't have.
 
 ### How each package is laid out
 
@@ -288,12 +299,21 @@ reterminal_e1003__encryption_key: "…"     # 32-byte base64, ESPHome generates 
 reterminal_e1003__ota_password: "…"
 reterminal_diy__encryption_key: "…"
 reterminal_diy__ota_password: "…"
+reterminal_e1002__encryption_key: "…"
+reterminal_e1002__ota_password: "…"
+reterminal_e1001__encryption_key: "…"
+reterminal_e1001__ota_password: "…"
+trmnl_diy__encryption_key: "…"
+trmnl_diy__ota_password: "…"
+trmnl_og__encryption_key: "…"
+trmnl_og__ota_password: "…"
 ```
 
 ### 2. Substitutions
 
 Open the ESPHome YAML and edit the `substitutions:` block at the top:
 
+- **Top row layout** – `top_layout: "split"` (the default) gives you a clock card on the left half and a bordered weather card on the right with the current weather and the 3-hour forecast. `"wide"` puts the current weather inside the clock card (2/3 of the width) with the forecast on the right. Same option on every panel.
 - **Feature switches** – `feature_energy`, `feature_solar`, `feature_water`, `feature_heating`, `feature_agenda` and `feature_plants` on the E1003 (these are first-boot defaults; you can change them later in Settings → Features). On the DIY panel they're called `show_*`. Match them to the packages you installed.
 - **Entities** – grid power, import / export totals, solar, water, your thermostat, and an indoor temperature sensor for the plants.
 
@@ -440,22 +460,26 @@ Room cards come from your areas. The leading room you pick decides when the boil
 
 ![Plants page](images/e1003-plants.png)
 
-Up to 15 plants with a virtual reservoir each. It empties based on glass size, days per glass and room temperature. Tap a plant when you water it.
+Up to 15 plants with a virtual reservoir each. It empties based on glass size, days per glass and room temperature. Home Assistant keeps the levels and drains them every 5 minutes, so every panel shows the same numbers, with or without an E1003. When you water a plant, tap it on the E1003 or press **Water** on the plants card.
 
 **Files:** `panel_plants.yaml`, `panel_plants.jinja`, `cards/plants-card.yaml`
 
 1. Restart, and 15 sample plants appear.
 2. Use the plants card to set the name, icon, room, glass size and days per glass. Type `-` as a name to hide a plant.
-3. Long-press a plant on the E1003 to move it to another room.
-4. Set `indoor_temp:` in the E1003 substitutions.
+3. Set **Reservoir** (glasses) and **Warn when less than** (days) under **All plants** on the same card. They're 2 glasses and 1 day to start with. On the E1003 they're also in Settings → Plants.
+4. Pick each plant's room on the card, or long-press a plant on the E1003. A plant drinks faster in a warm room.
 
 | Section | Responsible for |
 | --- | --- |
-| `input_number` | Glass size, days per glass, global multiplier |
+| `input_number` | Glass size, days per glass, global multiplier, **water left per plant**, reservoir size, warning |
+| `script.panel_water_plant` | Waters a plant (`plant: 1…15`, `glasses:`), never over the reservoir. Use it in your own buttons or NFC tags |
+| `sensor.panel_plants_needing_water` | How many need water, the 5 thirstiest (read by every panel) and every plant as JSON |
 | `input_select` / `input_text` | Icon and name |
 | `input_button` | Reload the samples |
 | Which room each plant is in | Rooms from areas, and the temperature behind thirst |
-| Automation | Samples on first start |
+| Automations | Samples on first start, the plants drinking every 5 minutes |
+
+> **Updating from an older E1003 firmware (v27 or earlier)?** The E1003 used to keep the water levels itself. After you install v28, it hands its levels, reservoir size and warning to Home Assistant the first time it connects, but only for plants that don't have a level yet. From then on Home Assistant keeps them.
 
 ### Tasks and calendar
 
@@ -513,6 +537,7 @@ Hold left or right to open Settings. Use **Done**, or hold green, to leave.
 | --- | --- |
 | Display | Theme, 12 / 24 h clock, touch feedback (tick or border) |
 | Refresh | Every minute, or 10 / 15 / 30 min or 1 / 2 h with deep sleep between refreshes |
+| Night sleep | On / off, **Asleep from** and **Wake up at** (30-minute steps) |
 | Thermostat choices | Targets offered on room cards |
 | Plants | Reservoir, warning level, drink multiplier |
 | Device | Battery, Wi-Fi, firmware. Tap it to add a Wi-Fi network |
@@ -526,13 +551,17 @@ Hold left or right to open Settings. Use **Done**, or hold green, to leave.
 | Electricity | Import kWh per day, week and month |
 | Water | Litres per day, week and month |
 
-Go over a limit and a black chip appears in the top bar. The panel also publishes it to Home Assistant as `sensor.reterminal_e1003_heating_alert` and `sensor.reterminal_e1003_usage_alert`, so you can build your own notifications.
+Go over a limit and a black chip appears in the top bar of every panel. Home Assistant works the alerts out itself, as `sensor.panel_heating_alert` and `sensor.panel_usage_alert` (empty means all fine), so they work without an E1003, and you can use them for your own notifications. The limits are Home Assistant helpers: set them here or on the prices card, and the other side follows.
 
 **Sleep mode**
 
 ![Home while asleep](images/e1003-home-asleep.png)
 
 With any refresh rate other than 1 minute, the panel wakes on the 10, 15 or 30-minute (or hourly) marks, draws Home, and goes back to sleep. The clock then shows when the screen was last updated, and the footnote says when the next update is due. Press green to wake it and use the touch screen. It goes back to sleep 2 minutes after your last touch. Updates over Wi-Fi only work while it's awake.
+
+**Night sleep**
+
+Switch on **Night sleep** in Settings and pick when it goes to sleep and wakes up. Between those times the panel doesn't refresh at all: it draws Home one last time, with **Night sleep · back at 07:00** next to the clock and the same in the footnote, then sleeps until the morning. Press green during the night and it wakes up for you, then goes back to sleep 5 minutes after your last touch. Night sleep works with any refresh setting, including every minute.
 
 ---
 
@@ -547,14 +576,81 @@ The DIY panel has no touch screen, so it does everything on its own:
 
 - The top row shows solar + grid (1-minute averages) and Bills Today.
 - The right column shows 7 days of power, water and heating, moving on one step at each refresh.
-- The left column holds a rotating card: power chart, plants, heating, bills, 30-day energy and water, and the agenda.
-- **Settings live in Home Assistant** (`cards/panels-card.yaml`):
+- The left column holds a rotating card: the 24-hour power chart with the 4-hour solar forecast (the same as on the E1003), plants, heating, bills, 30-day energy and water, and the agenda.
+- The top bar shows the same alerts as the E1003: plants that need water, offline room sensors, and heating, electricity or water over a limit. All of them come from Home Assistant, so the panel doesn't need an E1003.
+- **Settings live in Home Assistant** (`cards/panels-card.yaml`, which lists every panel):
   - **DIY panel refresh** – every minute keeps it always on. Anything longer means deep sleep between refreshes.
   - **DIY panel card change** – how often the rotating card moves on.
   - **DIY panel stay awake** – switch it on before a Wi-Fi update. It takes effect at the next wake.
+  - **DIY panel night sleep**, **night sleep from** and **night sleep until** – no refreshes overnight. The panel draws one last frame showing **Night sleep · back at 07:00**, then sleeps until that time. On panels with buttons, a press wakes it for 5 minutes, then it goes back to sleep until the morning.
 - The `show_*` lines at the top of `xiao-esp32-eink.yaml` pick its features. Change one and install again.
 
 The footnote shows when the screen was last updated, and when it wakes next while sleeping.
+
+---
+
+## The colour panel (reTerminal E1002)
+
+| | |
+| --- | --- |
+| ![E1002 – plants](images/e1002-color-plants.png) | ![E1002 – last 12 hours](images/e1002-color-chart.png) |
+| ![E1002 – energy, 30 days](images/e1002-color-energy.png) | ![E1002 – bills, 7 days](images/e1002-color-bills.png) |
+| ![E1002 – heating](images/e1002-color-heating.png) | ![E1002 – agenda](images/e1002-color-agenda.png) |
+
+`reterminal-e1002-color.yaml` is the DIY layout redrawn for the reTerminal E1002's 7.3" Spectra 6 screen. It uses the same Home Assistant packages as the DIY panel, with its own **E1002 panel refresh**, **card change** and **stay awake** helpers, which `panel_core.yaml` creates.
+
+Each utility has one colour, the same everywhere on the screen, so you can tell at a glance what you're looking at:
+
+| Colour | Utility | Where you'll see it |
+| --- | --- | --- |
+| ⚫ **Black** | Power | Grid card and line, power bars, power segments in the bills |
+| 🔵 **Blue** | Water | Water bars and headings, water segments in the bills, rain and snow in the forecast, the "plants need water" chip |
+| 🔴 **Red** | Heating | Heating bars and bill segments, the heating pill, the leading room's temperature, heating alerts |
+| 🟢 **Green** | Solar | Solar card, solar line on the chart, solar bars |
+| 🌱 **Green + light blue** | Plants | A green leaf and reservoir frames, with light blue (blue and white dots) water |
+
+Figures are black, and lighter shades (dots of colour and white) mark past days next to today's solid bar. Yellow only fills the sunny slots of the forecast strip, which has a black frame. It's never used for text or figures, as it's hard to read on this screen.
+
+The E1002 also adds a few things the XIAO can't do:
+
+- **Battery** – level in the top bar (red under 20 %), and in Home Assistant.
+- **Room temperature and humidity** – from the on-board sensor, in the top bar and in Home Assistant.
+- **Buttons** – green redraws the screen now and wakes the panel while it sleeps. Left and right step back and forward through the rotating cards. Presses within 1.5 seconds add up to one redraw, so the slow colour refresh only happens once.
+- **Night sleep** – the **E1002 panel night sleep** helpers, as described for the [DIY panel](#the-diy-panel).
+
+Colour e-ink can't refresh part of the screen. Every redraw flashes the whole panel through its colours for about 20 seconds, so the E1002 redraws much less often than the black-and-white panels:
+
+- **While awake** it redraws every **E1002 panel redraw (awake)** minutes: 5, 10 (the default), 15, 30 or 60.
+- **Alerts redraw early.** It checks every minute, and when an alert appears or clears it redraws straight away, at most once every 2 minutes. That covers Home Assistant going offline, plants needing water, offline room sensors, and heating, electricity and water alerts.
+- **The clock shows when the screen was drawn**, with the time of the next redraw underneath, so a slow redraw never shows a wrong time.
+- **The green button** always redraws now.
+- **While asleep** nothing changes: it wakes on **E1002 panel refresh** and draws once.
+
+For battery life, set **E1002 panel refresh** to 15 minutes or longer.
+
+---
+
+## reTerminal E1001 and TRMNL
+
+![reTerminal E1001](images/e1001-plants.png)
+
+These run the DIY panel's black-and-white layout, with their own hardware set up:
+
+| | reTerminal E1001 | TRMNL 7.5" (OG) DIY Kit | TRMNL OG |
+| --- | --- | --- | --- |
+| File | `reterminal-e1001.yaml` | `trmnl-7in5-diy.yaml` | `trmnl-og.yaml` |
+| Refresh / wake button | Green button | KEY1 (GPIO2) | Hold the button for 1 s |
+| Previous / next card | Left / right buttons | KEY2 / KEY3 | Tap the button (next card) |
+| Top bar | Battery and room temperature | Battery and chip temperature | Battery and chip temperature |
+| In Home Assistant | Battery, room temperature and humidity | Battery | Battery |
+
+Any button press keeps the panel awake for 5 minutes. Night sleep works the same as on the [DIY panel](#the-diy-panel), using each panel's own **… night sleep** helpers.
+
+> **TRMNL OG:** installing this replaces TRMNL's own firmware, so the device stops working with TRMNL's service until you flash TRMNL's firmware back (from usetrmnl.com). The first install has to go over USB: put the TRMNL into flashing mode with its boot button (see TRMNL's flashing guide), then install from the ESPHome dashboard. The pins come from TRMNL's open-source firmware. The TRMNL and the TRMNL DIY Kit share the **TRMNL panel …** settings, as you'd normally have one or the other.
+
+Everything else is the same as the [DIY panel](#the-diy-panel): the same packages, and the same `show_*` switches. Each has its own refresh, card change and stay awake helpers (**E1001 panel …** and **TRMNL panel …**). Black-and-white e-ink refreshes in a few seconds, so these keep the 30-second redraw while awake.
+
+> Every panel has its own settings, so you can run them all with different refresh rates. They're all in `cards/panels-card.yaml`.
 
 ---
 
@@ -573,6 +669,7 @@ The voice assistant pipeline you pick for the panel needs a **speech-to-text** e
 
 | Problem | Fix |
 | --- | --- |
+| Panels show different bills | Bills are worked out once in Home Assistant (**Panel Bills**, from `panel_core.yaml` and `custom_templates/panel_bills.jinja`) and every panel draws that, so they agree once all panels run the latest firmware. Today's kWh comes from the **Grid Import Today** meter (`panel_energy.yaml`): on the day you first add it, it only counts from that moment – set it with `utility_meter.calibrate` or wait until midnight |
 | A row says "Entity not available" on a card | That feature's package isn't installed, or (for water) the tariff helpers don't exist yet |
 | Panel taps do nothing in Home Assistant | Tick "Allow the device to perform Home Assistant actions" for the panel |
 | The screen didn't change after an install | Check the version tag in the Home footnote. If it's old, the install failed or the panel was asleep: press green, then install again (or use ⋮ → Clean build files) |

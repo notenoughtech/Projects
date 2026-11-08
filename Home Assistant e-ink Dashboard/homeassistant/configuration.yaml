@@ -19,7 +19,7 @@
 #  show_* lines at the top of its YAML).
 #
 #  Also needed (same config folder):
-#    custom_templates/panel_rooms.jinja, panel_stats.jinja, panel_plants.jinja,
+#    custom_templates/panel_rooms.jinja, panel_stats.jinja, panel_plants.jinja, panel_alerts.jinja,
 #    panel_sun.jinja
 #    custom_sentences/en/panel.yaml   (voice commands)
 #  Dashboard cards to paste (Edit dashboard → Add card → Manual):

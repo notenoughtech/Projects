@@ -56,7 +56,7 @@ esphome:
             // woken by the sleep timer (Settings → Display → Refresh): draw once, sleep again.
             // Green button or power on: normal use (sleeps again 2 min after the last touch).
             const bool timer = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
-            id(wake_mode) = (timer && id(refresh_idx) > 0) ? 1 : 0;
+            id(wake_mode) = (timer && (id(refresh_idx) > 0 || id(night_on))) ? 1 : 0;
             id(draw_ok) = id(wake_mode) == 0;
             id(act_ms) = millis();
             ESP_LOGI("sleep", "Boot: %s", id(wake_mode) ? "timer refresh" : "in use");
@@ -96,7 +96,11 @@ output:
 # ─────────────────────────────────────────────────────────────
 substitutions:
   # Shown on Home (footnote) and in Settings → Device, to check what's installed
-  fw_version: "v20 (7 Nov 2026)"
+  fw_version: "v28 (8 Nov 2026)"
+  # Top row of Home:
+  #   "wide"  – clock and weather now in one dark card (2/3), 3 h forecast on the right
+  #   "split" – clock card on the left half, a bordered weather card (now + 3 h) on the right
+  top_layout: "split"
   # ── Setup hotspot (when there's no known Wi-Fi, or Settings → Add Wi-Fi) ──
   ap_ssid: "reTerminal E1003 Setup"
   ap_password: !secret fallback_password       # also put in the QR code on the screen
@@ -118,6 +122,12 @@ substitutions:
   solar_energy: sensor.solar_energy                 # kWh lifetime total
   solar_forecast: sensor.power_production_now       # W, Forecast.Solar
   water_today: sensor.panel_water_today            # L today (packages/panel_water.yaml)
+  # Today's kWh, reset at midnight by Home Assistant (packages/panel_energy.yaml and
+  # panel_solar.yaml) – the same numbers on every panel. Missing: the panel counts
+  # from its own midnight snapshot instead.
+  import_today: sensor.grid_import_today
+  export_today: sensor.grid_export_today
+  solar_today: sensor.solar_energy_today
   water_price: input_number.water_price             # £ per m³
   water_standing: input_number.water_standing_charge             # £ per year
   waste_water_standing: input_number.waste_water_standing_charge # £ per year
@@ -197,6 +207,7 @@ api:
   on_client_connected:
     - lambda: 'if (client_info.find("Home Assistant") != std::string::npos) id(ha_ok) = true;'
     - script.execute: first_limit_sync
+    - script.execute: plants_to_ha
   on_client_disconnected:
     - lambda: 'if (client_info.find("Home Assistant") != std::string::npos) id(ha_ok) = false;'
   encryption:
@@ -519,6 +530,20 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  # Night sleep (Settings → Night sleep): asleep from night_from until night_to
+  # (minutes after midnight). Green button: awake, back to sleep 5 min after the last touch.
+  - id: night_on
+    type: bool
+    restore_value: true
+    initial_value: "false"
+  - id: night_from
+    type: int
+    restore_value: true
+    initial_value: "1380"            # 23:00
+  - id: night_to
+    type: int
+    restore_value: true
+    initial_value: "420"             # 07:00
   - id: base_doy                   # day of the year the "today" baselines belong to
     type: int
     restore_value: true
@@ -791,6 +816,14 @@ globals:
     type: bool
     restore_value: true
     initial_value: "false"
+  - id: plants_in_ha               # plant water levels handed to HA once (from then on HA keeps them)
+    type: bool
+    restore_value: true
+    initial_value: "false"
+  - id: plant_set_ms               # when Settings last changed reservoir / warning here
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
   - id: lim_budget                 # false = limits in hours, true = limits in £
     type: bool
     restore_value: true
@@ -1329,6 +1362,23 @@ text_sensor:
     attribute: last7_imp
     id: en_last7_imp
     internal: true
+  # Bills worked out once in Home Assistant (packages/panel_core.yaml → Panel Bills):
+  # £ per day, last 7 days, today last – so every panel shows the same figures
+  - platform: homeassistant
+    entity_id: sensor.panel_bills
+    attribute: power
+    id: bill_p
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_bills
+    attribute: water
+    id: bill_w
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_bills
+    attribute: heating
+    id: bill_h
+    internal: true
   - platform: homeassistant
     entity_id: sensor.panel_energy_daily
     attribute: sol
@@ -1634,6 +1684,89 @@ sensor:
           if (id(page) == 4) id(dirty_mask) |= 1u << 15;
           id(heat_limits_changed).execute();
 
+  # Electricity / water alerts and heating per month from HA helpers (0 = off),
+  # the same way as the heating limits above (Home Assistant: cards/prices-card.yaml)
+  - platform: homeassistant
+    entity_id: input_number.heating_limit_month_hours
+    id: ha_hlim_month_hours
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(lim_synced) || millis() - id(heat_lim_ms) < 5000 || fabsf(x - id(lim_month_h)) < 0.004f) return;
+          id(lim_month_h) = x;
+          if (id(page) == 4) id(dirty_mask) |= 1u << 18;
+          id(heat_limits_changed).execute();
+  - platform: homeassistant
+    entity_id: input_number.heating_limit_month_cost
+    id: ha_hlim_month_cost
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(lim_synced) || millis() - id(heat_lim_ms) < 5000 || fabsf(x - id(lim_month_gbp)) < 0.004f) return;
+          id(lim_month_gbp) = x;
+          if (id(page) == 4) id(dirty_mask) |= 1u << 18;
+          id(heat_limits_changed).execute();
+  - platform: homeassistant
+    entity_id: input_number.energy_alert_day_kwh
+    id: ha_pw_lim_day
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(lim_synced) || millis() - id(heat_lim_ms) < 5000 || fabsf(x - id(pw_lim)[0]) < 0.004f) return;
+          id(pw_lim)[0] = x;
+          if (id(page) == 4) id(dirty_mask) |= 1u << 19;
+          id(usage_alert_refresh).execute();
+  - platform: homeassistant
+    entity_id: input_number.energy_alert_week_kwh
+    id: ha_pw_lim_week
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(lim_synced) || millis() - id(heat_lim_ms) < 5000 || fabsf(x - id(pw_lim)[1]) < 0.004f) return;
+          id(pw_lim)[1] = x;
+          if (id(page) == 4) id(dirty_mask) |= 1u << 20;
+          id(usage_alert_refresh).execute();
+  - platform: homeassistant
+    entity_id: input_number.energy_alert_month_kwh
+    id: ha_pw_lim_month
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(lim_synced) || millis() - id(heat_lim_ms) < 5000 || fabsf(x - id(pw_lim)[2]) < 0.004f) return;
+          id(pw_lim)[2] = x;
+          if (id(page) == 4) id(dirty_mask) |= 1u << 21;
+          id(usage_alert_refresh).execute();
+  - platform: homeassistant
+    entity_id: input_number.water_alert_day_litres
+    id: ha_wt_lim_day
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(lim_synced) || millis() - id(heat_lim_ms) < 5000 || fabsf(x - id(wt_lim)[0]) < 0.004f) return;
+          id(wt_lim)[0] = x;
+          if (id(page) == 4) id(dirty_mask) |= 1u << 22;
+          id(usage_alert_refresh).execute();
+  - platform: homeassistant
+    entity_id: input_number.water_alert_week_litres
+    id: ha_wt_lim_week
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(lim_synced) || millis() - id(heat_lim_ms) < 5000 || fabsf(x - id(wt_lim)[1]) < 0.004f) return;
+          id(wt_lim)[1] = x;
+          if (id(page) == 4) id(dirty_mask) |= 1u << 23;
+          id(usage_alert_refresh).execute();
+  - platform: homeassistant
+    entity_id: input_number.water_alert_month_litres
+    id: ha_wt_lim_month
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(lim_synced) || millis() - id(heat_lim_ms) < 5000 || fabsf(x - id(wt_lim)[2]) < 0.004f) return;
+          id(wt_lim)[2] = x;
+          if (id(page) == 4) id(dirty_mask) |= 1u << 25;
+          id(usage_alert_refresh).execute();
+
   # Heating time (hours the boiler was on): today, 1–6 days ago, this week
   - platform: homeassistant
     entity_id: sensor.heating_on_today
@@ -1699,6 +1832,18 @@ sensor:
     internal: true
 
   # Lifetime energy totals → "today" via midnight baseline
+  - platform: homeassistant              # today's kWh from Home Assistant (see substitutions)
+    entity_id: ${import_today}
+    id: ha_imp_today
+    internal: true
+  - platform: homeassistant
+    entity_id: ${export_today}
+    id: ha_exp_today
+    internal: true
+  - platform: homeassistant
+    entity_id: ${solar_today}
+    id: ha_sol_today
+    internal: true
   - platform: homeassistant
     entity_id: ${grid_import_energy}
     id: myGridImport
@@ -1754,6 +1899,169 @@ sensor:
     entity_id: ${plant_multiplier}
     id: plant_mult
     internal: true
+
+  # Plant water left (ml) – Home Assistant keeps and drains these (packages/panel_plants.yaml);
+  # the panel shows them and waters through script.panel_water_plant
+  - platform: homeassistant
+    entity_id: input_number.plant_1_level
+    id: ha_p1_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p1_level).state) < 0.05f) return;
+          auto c = id(p1_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_2_level
+    id: ha_p2_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p2_level).state) < 0.05f) return;
+          auto c = id(p2_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_3_level
+    id: ha_p3_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p3_level).state) < 0.05f) return;
+          auto c = id(p3_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_4_level
+    id: ha_p4_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p4_level).state) < 0.05f) return;
+          auto c = id(p4_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_5_level
+    id: ha_p5_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p5_level).state) < 0.05f) return;
+          auto c = id(p5_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_6_level
+    id: ha_p6_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p6_level).state) < 0.05f) return;
+          auto c = id(p6_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_7_level
+    id: ha_p7_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p7_level).state) < 0.05f) return;
+          auto c = id(p7_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_8_level
+    id: ha_p8_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p8_level).state) < 0.05f) return;
+          auto c = id(p8_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_9_level
+    id: ha_p9_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p9_level).state) < 0.05f) return;
+          auto c = id(p9_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_10_level
+    id: ha_p10_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p10_level).state) < 0.05f) return;
+          auto c = id(p10_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_11_level
+    id: ha_p11_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p11_level).state) < 0.05f) return;
+          auto c = id(p11_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_12_level
+    id: ha_p12_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p12_level).state) < 0.05f) return;
+          auto c = id(p12_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_13_level
+    id: ha_p13_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p13_level).state) < 0.05f) return;
+          auto c = id(p13_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_14_level
+    id: ha_p14_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p14_level).state) < 0.05f) return;
+          auto c = id(p14_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_15_level
+    id: ha_p15_level
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || fabsf(x - id(p15_level).state) < 0.05f) return;
+          auto c = id(p15_level).make_call(); c.set_value(x); c.perform();
+          id(plant_levels_in).execute();
+  # Reservoir size (glasses) and water warning (days) – also on Settings → Plants here
+  - platform: homeassistant
+    entity_id: input_number.plant_reservoir_glasses
+    id: ha_plant_res
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || millis() - id(plant_set_ms) < 5000) return;
+          const int v = std::min(5, std::max(1, (int) roundf(x)));
+          if (v == id(max_glasses)) return;
+          id(max_glasses) = v;
+          if (id(page) == 4) id(dirty_mask) |= 1u << 8;
+          id(plant_levels_in).execute();
+  - platform: homeassistant
+    entity_id: input_number.plant_warning_days
+    id: ha_plant_warn
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(x) || !id(plants_in_ha) || millis() - id(plant_set_ms) < 5000) return;
+          const float v = std::min(5.0f, std::max(0.5f, roundf(x * 2) / 2));
+          if (fabsf(v - id(dry_days)) < 0.01f) return;
+          id(dry_days) = v;
+          if (id(page) == 4) id(dirty_mask) |= 1u << 9;
+          id(plant_levels_in).execute();
 
   # Per plant: glass size (ml) and how many days one glass lasts at 20 °C
   - platform: homeassistant
@@ -1940,6 +2248,7 @@ number:
   - platform: template
     id: p1_level
     name: "Plant 1 water (${plant1_name})"
+    internal: true                    # Home Assistant: input_number.plant_1_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -1950,6 +2259,7 @@ number:
   - platform: template
     id: p2_level
     name: "Plant 2 water (${plant2_name})"
+    internal: true                    # Home Assistant: input_number.plant_2_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -1960,6 +2270,7 @@ number:
   - platform: template
     id: p3_level
     name: "Plant 3 water (${plant3_name})"
+    internal: true                    # Home Assistant: input_number.plant_3_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -1970,6 +2281,7 @@ number:
   - platform: template
     id: p4_level
     name: "Plant 4 water (${plant4_name})"
+    internal: true                    # Home Assistant: input_number.plant_4_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -1980,6 +2292,7 @@ number:
   - platform: template
     id: p5_level
     name: "Plant 5 water (${plant5_name})"
+    internal: true                    # Home Assistant: input_number.plant_5_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -1990,6 +2303,7 @@ number:
   - platform: template
     id: p6_level
     name: "Plant 6 water (${plant6_name})"
+    internal: true                    # Home Assistant: input_number.plant_6_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -2000,6 +2314,7 @@ number:
   - platform: template
     id: p7_level
     name: "Plant 7 water (${plant7_name})"
+    internal: true                    # Home Assistant: input_number.plant_7_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -2010,6 +2325,7 @@ number:
   - platform: template
     id: p8_level
     name: "Plant 8 water (${plant8_name})"
+    internal: true                    # Home Assistant: input_number.plant_8_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -2020,6 +2336,7 @@ number:
   - platform: template
     id: p9_level
     name: "Plant 9 water (${plant9_name})"
+    internal: true                    # Home Assistant: input_number.plant_9_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -2030,6 +2347,7 @@ number:
   - platform: template
     id: p10_level
     name: "Plant 10 water (${plant10_name})"
+    internal: true                    # Home Assistant: input_number.plant_10_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -2040,6 +2358,7 @@ number:
   - platform: template
     id: p11_level
     name: "Plant 11 water (${plant11_name})"
+    internal: true                    # Home Assistant: input_number.plant_11_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -2050,6 +2369,7 @@ number:
   - platform: template
     id: p12_level
     name: "Plant 12 water (${plant12_name})"
+    internal: true                    # Home Assistant: input_number.plant_12_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -2060,6 +2380,7 @@ number:
   - platform: template
     id: p13_level
     name: "Plant 13 water (${plant13_name})"
+    internal: true                    # Home Assistant: input_number.plant_13_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -2070,6 +2391,7 @@ number:
   - platform: template
     id: p14_level
     name: "Plant 14 water (${plant14_name})"
+    internal: true                    # Home Assistant: input_number.plant_14_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -2080,6 +2402,7 @@ number:
   - platform: template
     id: p15_level
     name: "Plant 15 water (${plant15_name})"
+    internal: true                    # Home Assistant: input_number.plant_15_level
     unit_of_measurement: ml
     min_value: 0
     max_value: 10000
@@ -2108,6 +2431,30 @@ script:
   - id: enter_sleep
     then:
       - lambda: |-
+          // night sleep (Settings → Night sleep): between night_from and night_to
+          auto in_night = [&](const ESPTime &tn) -> bool {
+            if (!id(night_on) || !tn.is_valid()) return false;
+            const int m = tn.hour * 60 + tn.minute, a = id(night_from), b = id(night_to);
+            if (a == b) return false;
+            return a < b ? (m >= a && m < b) : (m >= a || m < b);
+          };
+          {
+            auto t0 = id(ha_time).now();
+            if (in_night(t0)) {
+              const int secs = t0.hour * 3600 + t0.minute * 60 + t0.second;
+              const int left = ((id(night_to) * 60 - secs) % 86400 + 86400) % 86400;
+              ESP_LOGI("sleep", "Night sleep for %d s, until %02d:%02d (green button wakes the panel)",
+                       left + 15, id(night_to) / 60, id(night_to) % 60);
+              id(deep_sleep_ctl).set_sleep_duration((uint32_t) (left + 15) * 1000u);
+              id(deep_sleep_ctl).begin_sleep(true);
+              return;
+            }
+          }
+          if (id(refresh_idx) <= 0) {          // the night is over and refresh is "every minute": stay on
+            id(wake_mode) = 0;
+            id(going_sleep) = false;
+            return;
+          }
           static const int REFRESH_MIN[6] = {1, 10, 15, 30, 60, 120};
           const int iv = REFRESH_MIN[std::min(5, std::max(1, id(refresh_idx)))] * 60;
           int left = iv;
@@ -2573,6 +2920,107 @@ script:
           data:
             entity_id: input_number.heating_limit_week_cost
             value: !lambda 'return str_sprintf("%.0f", id(lim_week_gbp));'
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.heating_limit_month_hours
+            value: !lambda 'return str_sprintf("%.0f", id(lim_month_h));'
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.heating_limit_month_cost
+            value: !lambda 'return str_sprintf("%.0f", id(lim_month_gbp));'
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.energy_alert_day_kwh
+            value: !lambda 'return str_sprintf("%.1f", id(pw_lim)[0]);'
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.energy_alert_week_kwh
+            value: !lambda 'return str_sprintf("%.0f", id(pw_lim)[1]);'
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.energy_alert_month_kwh
+            value: !lambda 'return str_sprintf("%.0f", id(pw_lim)[2]);'
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.water_alert_day_litres
+            value: !lambda 'return str_sprintf("%.0f", id(wt_lim)[0]);'
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.water_alert_week_litres
+            value: !lambda 'return str_sprintf("%.0f", id(wt_lim)[1]);'
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.water_alert_month_litres
+            value: !lambda 'return str_sprintf("%.0f", id(wt_lim)[2]);'
+
+  # HA changed a plant level / reservoir / warning: new summary, redraw plant views soon
+  - id: plant_levels_in
+    mode: restart
+    then:
+      - delay: 2s
+      - component.update: plant_summary_pub
+      - lambda: |-
+          if (id(page) == 0 || id(page) == 3) id(force_full) = true;
+      - script.execute: refresh_soon
+
+  # Once, after this firmware is flashed: hand the panel's plant levels (where HA
+  # has none yet), reservoir size and warning to Home Assistant. From then on HA
+  # keeps them, drains them every 5 minutes, and every panel reads them.
+  - id: plants_to_ha
+    mode: single
+    then:
+      - delay: 10s
+      - if:
+          condition:
+            lambda: 'return id(ha_ok) && !id(plants_in_ha);'
+          then:
+            - lambda: 'ESP_LOGI("plants", "Handing plant water levels to Home Assistant (once)");'
+            - homeassistant.action:
+                action: script.panel_plants_import
+                data:
+                  levels: !lambda |-
+                    number::Number *lv[15] = {id(p1_level), id(p2_level), id(p3_level), id(p4_level), id(p5_level), id(p6_level), id(p7_level), id(p8_level), id(p9_level), id(p10_level), id(p11_level), id(p12_level), id(p13_level), id(p14_level), id(p15_level)};
+                    std::string o;
+                    for (int i = 0; i < 15; i++)
+                      o += str_sprintf("%s%.0f", i ? "," : "", std::isnan(lv[i]->state) ? 0.0f : lv[i]->state);
+                    return o;
+            - script.execute: push_plant_settings
+            - delay: 4s
+            - lambda: |-
+                id(plants_in_ha) = true;
+                // from now on: Home Assistant's levels
+                sensor::Sensor *ha[15] = {id(ha_p1_level), id(ha_p2_level), id(ha_p3_level), id(ha_p4_level), id(ha_p5_level), id(ha_p6_level), id(ha_p7_level), id(ha_p8_level), id(ha_p9_level), id(ha_p10_level), id(ha_p11_level), id(ha_p12_level), id(ha_p13_level), id(ha_p14_level), id(ha_p15_level)};
+                number::Number *lv[15] = {id(p1_level), id(p2_level), id(p3_level), id(p4_level), id(p5_level), id(p6_level), id(p7_level), id(p8_level), id(p9_level), id(p10_level), id(p11_level), id(p12_level), id(p13_level), id(p14_level), id(p15_level)};
+                for (int i = 0; i < 15; i++) {
+                  if (std::isnan(ha[i]->state)) continue;
+                  auto c = lv[i]->make_call(); c.set_value(ha[i]->state); c.perform();
+                }
+            - script.execute: plant_levels_in
+
+  # Settings → Plants changed here: reservoir size and warning → HA
+  - id: push_plant_settings
+    mode: restart
+    then:
+      - delay: 600ms
+      - lambda: 'id(plant_set_ms) = millis();'
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.plant_reservoir_glasses
+            value: !lambda 'return str_sprintf("%d", id(max_glasses));'
+      - homeassistant.action:
+          action: input_number.set_value
+          data:
+            entity_id: input_number.plant_warning_days
+            value: !lambda 'return str_sprintf("%.1f", id(dry_days));'
 
   # First time HA connects: give the new helpers the panel's limits once;
   # from then on a change on either side is passed to the other
@@ -2619,6 +3067,15 @@ script:
           auto call = lv[i]->make_call();
           call.set_value(std::min(cap, cur + glass));
           call.perform();
+      - if:                                      # the real level lives in Home Assistant
+          condition:
+            lambda: 'return id(ha_ok);'
+          then:
+            - homeassistant.action:
+                action: script.panel_water_plant
+                data:
+                  plant: !lambda 'return str_sprintf("%d", i + 1);'
+                  glasses: "1"
       - component.update: plant_summary_pub
       - script.execute: refresh_soon
 
@@ -2709,37 +3166,24 @@ interval:
   - interval: 10s
     then:
       - lambda: |-
-          if (id(refresh_idx) <= 0 || id(wake_mode) != 0 || id(going_sleep)) return;
+          // night sleep (Settings → Night sleep): between night_from and night_to
+          auto in_night = [&](const ESPTime &tn) -> bool {
+            if (!id(night_on) || !tn.is_valid()) return false;
+            const int m = tn.hour * 60 + tn.minute, a = id(night_from), b = id(night_to);
+            if (a == b) return false;
+            return a < b ? (m >= a && m < b) : (m >= a || m < b);
+          };
+          const bool night = in_night(id(ha_time).now());
+          if ((id(refresh_idx) <= 0 && !night) || id(wake_mode) != 0 || id(going_sleep)) return;
           if (id(page) == 8 || wifi::global_wifi_component->is_ap_active()) return;   // Wi-Fi setup
+          const uint32_t idle = night ? 300000u : 120000u;     // night: 5 min after the last touch
           const uint32_t nowms = millis();
-          if (nowms < 120000) return;
+          if (nowms < idle) return;
           const uint32_t a = nowms - id(act_ms), b = id(ui_touch_ms) ? nowms - id(ui_touch_ms) : a;
-          if (std::min(a, b) < 120000) return;
-          ESP_LOGI("sleep", "2 min without a touch – going to sleep");
+          if (std::min(a, b) < idle) return;
+          ESP_LOGI("sleep", "%s without a touch – going to sleep", night ? "5 min (night sleep)" : "2 min");
           id(go_sleep).execute();
-  - interval: 5min
-    then:
-      - lambda: |-
-          number::Number *lv[15] = {id(p1_level), id(p2_level), id(p3_level), id(p4_level), id(p5_level), id(p6_level), id(p7_level), id(p8_level), id(p9_level), id(p10_level), id(p11_level), id(p12_level), id(p13_level), id(p14_level), id(p15_level)};
-          sensor::Sensor *gl[15] = {id(p1_glass), id(p2_glass), id(p3_glass), id(p4_glass), id(p5_glass), id(p6_glass), id(p7_glass), id(p8_glass), id(p9_glass), id(p10_glass), id(p11_glass), id(p12_glass), id(p13_glass), id(p14_glass), id(p15_glass)};
-          sensor::Sensor *dy[15] = {id(p1_days), id(p2_days), id(p3_days), id(p4_days), id(p5_days), id(p6_days), id(p7_days), id(p8_days), id(p9_days), id(p10_days), id(p11_days), id(p12_days), id(p13_days), id(p14_days), id(p15_days)};
-          float t = id(house_temp).state;
-          if (std::isnan(t)) t = id(room_temp).state;   // fall back to the on-board sensor
-          if (std::isnan(t)) t = 20.0f;
-          float m = std::isnan(id(plant_mult).state) ? 1.0f : id(plant_mult).state;
-          for (int i = 0; i < 15; i++) {
-            // the plant's own room temperature (floor / house average if its room has no sensor)
-            const float ti = std::min(35.0f, std::max(5.0f, std::isnan(id(plant_t)[i]) ? t : id(plant_t)[i]));
-            const float factor = powf(2.0f, (ti - 20.0f) / 10.0f) * m;
-            float glass = std::isnan(gl[i]->state) ? 250.0f : gl[i]->state;
-            float days  = std::isnan(dy[i]->state) || dy[i]->state <= 0 ? 7.0f : dy[i]->state;
-            float cur   = std::isnan(lv[i]->state) ? 0.0f : lv[i]->state;
-            if (cur <= 0) continue;
-            float drink = glass / days * factor * (5.0f / 1440.0f);   // ml in 5 minutes
-            auto call = lv[i]->make_call();
-            call.set_value(std::max(0.0f, cur - drink));
-            call.perform();
-          }
+  # (the plants drink in Home Assistant now: automation "plants_drink", every 5 min)
 
 # ─────────────────────────────────────────────────────────────
 # Buttons
@@ -3375,6 +3819,7 @@ touchscreen:
               else                id(lim_month_h)   = std::min(744.0f, std::max(0.0f, id(lim_month_h) + (arg ? 5.0f : -5.0f)));
               refresh(1u << 18);
               id(heat_limits_changed).execute();
+              id(push_limits).execute();                 // → HA helpers
               break;
             case 45: case 46: {                          // electricity / water: row (day, week, month) × − +
               const int r = arg / 2;
@@ -3386,6 +3831,20 @@ touchscreen:
               static const uint32_t BITS[2][3] = {{1u << 19, 1u << 20, 1u << 21}, {1u << 22, 1u << 23, 1u << 25}};
               refresh(BITS[q][r]);
               id(usage_alert_refresh).execute();
+              id(push_limits).execute();                 // → HA helpers
+              break;
+            }
+            case 47:                                     // night sleep: 0 off, 1 on
+              id(night_on) = arg == 1;
+              id(act_ms) = millis();
+              refresh(1u << 27);
+              break;
+            case 48:                                     // asleep from: − / + 30 min
+            case 49: {                                   // wake up at: − / + 30 min
+              int &tv = act == 48 ? id(night_from) : id(night_to);
+              tv = ((tv + (arg ? 30 : -30)) % 1440 + 1440) % 1440;
+              id(act_ms) = millis();
+              refresh(act == 48 ? (1u << 28) : (1u << 29));
               break;
             }
             case 37:                                     // refresh: 0 = 1 min … 5 = 2 h (sleep between)
@@ -3407,10 +3866,12 @@ touchscreen:
             case 26:
               id(max_glasses) = std::min(5, std::max(1, id(max_glasses) + (arg ? 1 : -1)));
               refresh(1u << 8);
+              id(push_plant_settings).execute();         // → HA helper
               break;
             case 27:
               id(dry_days) = std::min(5.0f, std::max(0.5f, id(dry_days) + (arg ? 0.5f : -0.5f)));
               refresh(1u << 9);
+              id(push_plant_settings).execute();         // → HA helper
               break;
             case 28: {
               float cur = (!std::isnan(id(pend_mult)) && millis() - id(pend_mult_ms) < 15000)
@@ -3677,7 +4138,16 @@ display:
       // the next one comes, and whether the panel sleeps after it (no live clock then)
       static const int REFRESH_MIN[6] = {1, 10, 15, 30, 60, 120};
       const int r_idx = std::min(5, std::max(0, id(refresh_idx)));
-      const bool sleepy = r_idx > 0 && (id(wake_mode) == 1 || id(going_sleep));
+      // night sleep (Settings → Night sleep): between night_from and night_to
+      auto in_night = [&](const ESPTime &tn) -> bool {
+        if (!id(night_on) || !tn.is_valid()) return false;
+        const int m = tn.hour * 60 + tn.minute, a = id(night_from), b = id(night_to);
+        if (a == b) return false;
+        return a < b ? (m >= a && m < b) : (m >= a || m < b);
+      };
+      const bool night_now = in_night(now);
+      const bool sleepy = (r_idx > 0 || night_now) && (id(wake_mode) == 1 || id(going_sleep));
+      const bool night_frame = sleepy && night_now;          // the last frame before night sleep
       char upd_s[12] = "--:--", next_s[12] = "--:--", sdate_s[20] = "";
       {
         auto hm_of = [&](int mins, char *o, size_t n) {
@@ -3695,15 +4165,16 @@ display:
           hm_of(secs / 60, upd_s, sizeof(upd_s));
           hm_of(nxt / 60, next_s, sizeof(next_s));
           snprintf(sdate_s, sizeof(sdate_s), "%.3s %d %.3s", day_s, now.day_of_month, date_s + (now.day_of_month >= 10 ? 3 : 2));
+          if (night_frame) hm_of(id(night_to), next_s, sizeof(next_s));   // back at …
         }
       }
       // power (0) or water (1) on the utility card, week chart and Energy page
 
       float price    = nz(id(energy_price).state);
       float standing = nz(id(energy_standing_charge).state);
-      float import_today = today_of(id(myGridImport).state, id(base_import));
-      float export_today = today_of(id(myGridExport).state, id(base_export));
-      float solar_today  = today_of(id(mySolarTotal).state, id(base_solar));
+      float import_today = !std::isnan(id(ha_imp_today).state) ? id(ha_imp_today).state : today_of(id(myGridImport).state, id(base_import));
+      float export_today = !std::isnan(id(ha_exp_today).state) ? id(ha_exp_today).state : today_of(id(myGridExport).state, id(base_export));
+      float solar_today  = !std::isnan(id(ha_sol_today).state) ? id(ha_sol_today).state : today_of(id(mySolarTotal).state, id(base_solar));
       float water_today  = nz(id(myWaterToday).state);
       float wprice       = nz(id(water_price).state) / 1000.0f;                 // £ per litre
       float wstanding    = (nz(id(water_standing_charge).state) +
@@ -3756,6 +4227,14 @@ display:
       // £ for a day's use (incl. the daily standing charge)
       auto day_cost = [&](int u, float v) -> float {
         return u == 0 ? v * price + standing : u == 1 ? v * wprice + wstanding : v * heat_h;
+      };
+      // Bills from Home Assistant (sensor.panel_bills): 7 × £, today last. false = not there
+      auto ha_bill = [&](int u, float *o) -> bool {
+        const std::string &bs = u == 0 ? id(bill_p).state : u == 1 ? id(bill_w).state : id(bill_h).state;
+        float t[7] = {};
+        if (parse_l(bs, t, 7) < 7) return false;
+        for (int i = 0; i < 7; i++) o[i] = t[i];
+        return true;
       };
 
       const uint32_t BAR = 1u << 24;
@@ -4125,8 +4604,10 @@ display:
                         lx, rcy, left ? lw : 0, rch};           // for the touch handler
 
         if (all) {
-          // ───────── CLOCK + DATE ─────────
-          card(48, 80, 864, 160, 4, true);
+          // ───────── TOP ROW: top_layout "wide" or "split" (substitutions) ─────────
+          const bool split_top = strcmp("${top_layout}", "split") == 0;
+          // clock + date (+ weather now when "wide"): one dark card
+          card(48, 80, split_top ? 864 : 1080, 160, 4, true);
           {
             char hm[12], ap[4];
             clock_str(hm, sizeof(hm), ap, sizeof(ap));
@@ -4140,32 +4621,46 @@ display:
             const char *dy_s = day_s, *dt_s = date_s;
             char dt2[48];
             if (sleepy) {                                  // asleep: the time is when this was drawn
-              snprintf(dt2, sizeof(dt2), "%s · next %s", sdate_s, next_s);
-              dy_s = "Updated";
+              snprintf(dt2, sizeof(dt2), night_frame ? "%s · back at %s" : "%s · next %s", sdate_s, next_s);
+              dy_s = night_frame ? "Night sleep" : "Updated";
               dt_s = dt2;
             }
-            const int dw = 880 - dx - 54;
+            const int dw = (split_top ? 880 : 784) - dx - 54;   // room left for the day / date
             it.print(dx + 54, 132, fit(dy_s, dw, id(f_cond), id(f_small)), PAPER, TextAlign::CENTER_LEFT, dy_s);
             it.print(dx + 54, 188, fit(dt_s, dw, id(f_small), fit(dt_s, dw, id(f_tiny), id(f_bar))), LIGHT,
                      TextAlign::CENTER_LEFT, dt_s);
           }
 
-          // ───────── WEATHER: now + next 24 h in 3 h steps ─────────
-          {                                                // no border: x 936–1824
-            const int wx0 = 936;
+          // weather now: icon · temperature · condition · pressure –
+          // "wide": inside the clock card · "split": left of the bordered weather card
+          if (split_top) card(936, 80, 888, 160, 4, false);
+          {
+            const int wx0 = split_top ? 944 : 804;
+            const Color fg = split_top ? INK : PAPER, fg2 = split_top ? DARK : LIGHT;
             const char *label;
             const char *icon = wx(id(myWeather).state, &label);
-            it.print(wx0 + 52, 160, id(f_wx_icon), INK, TextAlign::CENTER, icon);
+            if (!split_top) it.filled_rectangle(wx0, 112, 3, 96, DARK);
+            it.print(wx0 + 62, 160, id(f_wx_icon), fg, TextAlign::CENTER, icon);
             char tb[16], pb[24];
             if (std::isnan(id(myTemperature).state)) snprintf(tb, sizeof(tb), "--");
             else snprintf(tb, sizeof(tb), "%.0f°", TC(id(myTemperature).state));
-            it.print(wx0 + 114, 140, id(f_temp), INK, TextAlign::CENTER_LEFT, tb);
+            it.print(wx0 + 120, 140, id(f_temp), fg, TextAlign::CENTER_LEFT, tb);
             PRESS(id(myPressure).state, pb, sizeof(pb));
-            it.print(wx0 + 118, 190, id(f_bar), DARK, TextAlign::CENTER_LEFT, label);
-            it.print(wx0 + 118, 216, id(f_bar), MID, TextAlign::CENTER_LEFT, pb);
+            {
+              const int lx0 = wx0 + 124, lw0 = (split_top ? 1250 : 1104) - lx0;   // a long condition drops a size first
+              esphome::font::Font *lf = fit(label, lw0, id(f_bar), id(f_tiny));
+              it.print(lx0, 190, lf, fg2, TextAlign::CENTER_LEFT, ellipsize(lf, label, lw0).c_str());
+              it.print(lx0, 216, id(f_bar), fg2, TextAlign::CENTER_LEFT, pb);
+            }
+          }
 
+          // ───────── WEATHER: next 24 h in 3 h steps ─────────
+          // "wide": right third, above the Agenda card · "split": inside the weather card
+          {
             const std::string &src = id(wx_slots).state;
-            const int sx0 = 1264, sw = 70;
+            const int sx0 = split_top ? 1262 : 1152, sw = split_top ? 68 : 84;
+            const int yo = split_top ? -1 : 0;                // a little higher, inside the card
+            const int ys = split_top ? 224 : 228;            // solar strip
             size_t pos = 0;
             int n = 0;
             while (n < 8 && pos < src.size()) {
@@ -4182,26 +4677,26 @@ display:
                 const int light = atoi(f[4].c_str()), day = atoi(f[5].c_str());
                 const int score = light * day / 100;                 // 0…100
                 const int v = day <= 0 ? 60 : std::min(255, 150 + score * 105 / 100);
-                it.filled_rectangle(x + 1, 229, sw - 2, 8, Color(v, v, v));   // under the slot
+                it.filled_rectangle(x + 1, ys + 1, sw - 2, 8, Color(v, v, v));   // under the slot
               }
-              for (int yy = 100; yy < 222; yy += 6) it.draw_pixel_at(x, yy, LIGHT), it.draw_pixel_at(x, yy + 1, LIGHT);
+              for (int yy = 100 + yo; yy < ys - 6; yy += 6) it.draw_pixel_at(x, yy, LIGHT), it.draw_pixel_at(x, yy + 1, LIGHT);
               char hl[12];
               const int hh = atoi(f[0].c_str());
               if (id(clock_12h)) snprintf(hl, sizeof(hl), "%d%s", hh % 12 == 0 ? 12 : hh % 12, hh < 12 ? "am" : "pm");
               else               snprintf(hl, sizeof(hl), "%02d", hh);
-              it.print(cx, 100, id(f_bar), DARK, TextAlign::CENTER, hl);
-              it.print(cx, 142, id(f_wx_sm), INK, TextAlign::CENTER, wx(f[1], nullptr));
-              it.printf(cx, 184, id(f_label), INK, TextAlign::CENTER, "%.0f°", TC(atof(f[2].c_str())));
+              it.print(cx, 100 + yo, id(f_bar), DARK, TextAlign::CENTER, hl);
+              it.print(cx, 142 + yo, id(f_wx_sm), INK, TextAlign::CENTER, wx(f[1], nullptr));
+              it.printf(cx, 184 + yo, id(f_label), INK, TextAlign::CENTER, "%.0f°", TC(atof(f[2].c_str())));
               if (k >= 4 && atoi(f[3].c_str()) >= 30)
-                it.printf(cx, 208, id(f_bar), MID, TextAlign::CENTER, "%s%%", f[3].c_str());
+                it.printf(cx, 208 + yo, id(f_bar), MID, TextAlign::CENTER, "%s%%", f[3].c_str());
               n++;
             }
             if (n == 0) {
               const char *why = offline_msg();
-              it.print(1544, 160, id(f_bar), DARK, TextAlign::CENTER, why ? why : "3 h forecast not available yet");
+              it.print(split_top ? 1536 : 1488, 160, id(f_bar), DARK, TextAlign::CENTER, why ? why : "3 h forecast not available yet");
             } else if (id(show_solar)) {
-              it.rectangle(sx0, 228, n * sw, 10, INK);               // frame of the solar strip
-              for (int q = 1; q < n; q++) it.filled_rectangle(sx0 + q * sw, 228, 1, 10, INK);
+              it.rectangle(sx0, ys, n * sw, 10, INK);                // frame of the solar strip
+              for (int q = 1; q < n; q++) it.filled_rectangle(sx0 + q * sw, ys, 1, 10, INK);
             }
           }
 
@@ -4357,7 +4852,8 @@ display:
             if (!u_on[u]) continue;
             float v[7];
             last7_of(u, v);
-            for (int i = 0; i < 7; i++) g[u][i] = day_cost(u, v[i]);
+            if (!ha_bill(u, g[u]))                       // Home Assistant's £, or the panel's own
+              for (int i = 0; i < 7; i++) g[u][i] = day_cost(u, v[i]);
           }
           for (int i = 0; i < 7; i++) {
             tot[i] = g[0][i] + g[1][i] + g[2][i];
@@ -4665,7 +5161,10 @@ display:
         if (all && now.is_valid()) {
           static const char *R_LAB[6] = {"minute", "10 min", "15 min", "30 min", "hour", "2 hours"};
           char fn[160];
-          if (sleepy)
+          if (night_frame)
+            snprintf(fn, sizeof(fn), "Updated %s · Night sleep until %s · press the green button to use the touch screen",
+                     upd_s, next_s);
+          else if (sleepy)
             snprintf(fn, sizeof(fn), "Updated %s · next update %s · Asleep: press the green button to use the touch screen",
                      upd_s, next_s);
           else if (r_idx > 0)
@@ -6391,6 +6890,23 @@ display:
             }
           }
 
+          // ── left: night sleep ──
+          {
+            const int NS = ry(D, 6) + 18;
+            heading(L, NS, "NIGHT SLEEP");
+            if (all) it.print(L + RW - 4, NS, id(f_label), DARK, TextAlign::CENTER_RIGHT, "GREEN BUTTON WAKES IT FOR 5 MIN");
+            static const char *o_ns[2] = {"Off", "On"};
+            chips(27, L, ry(NS, 0), "Night sleep", o_ns, 2, id(night_on) ? 1 : 0, 47);
+            auto hm = [&](int mins, char *o, size_t n) {
+              const int h = mins / 60, m = mins % 60;
+              if (id(clock_12h)) snprintf(o, n, "%d:%02d%s", h % 12 == 0 ? 12 : h % 12, m, h < 12 ? "am" : "pm");
+              else               snprintf(o, n, "%02d:%02d", h, m);
+            };
+            hm(id(night_from), v, sizeof(v));
+            stepper(28, L, ry(NS, 1), "Asleep from", v, 48, 0);
+            hm(id(night_to), v, sizeof(v));
+            stepper(29, L, ry(NS, 2), "Wake up at", v, 49, 0);
+          }
 
           // ── right: thermostat choices ──
           const int T = 226;

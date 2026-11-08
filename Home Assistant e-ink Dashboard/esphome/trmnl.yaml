@@ -1,0 +1,1951 @@
+# ═════════════════════════════════════════════════════════════
+# TRMNL 7.5" (OG) DIY Kit – the DIY panel layout on the TRMNL kit (XIAO ESP32-S3 Plus)
+# Same layout and Home Assistant setup as xiao-esp32-eink.yaml, plus battery
+# level in the top bar.
+# KEY1 (GPIO2): redraw now, and wake the panel when it sleeps.
+# ═════════════════════════════════════════════════════════════
+esphome:
+  name: trmnl-diy
+  friendly_name: TRMNL DIY
+  includes:
+    - <esp_sleep.h>
+  on_boot:
+    - priority: 600
+      then:
+        - output.turn_on: bsp_battery_enable   # battery voltage divider must be on before GPIO1 is read
+        - delay: 200ms
+        - component.update: battery_voltage
+        - component.update: battery_level
+    - priority: -100
+      then:
+        - lambda: |-
+            // woken by the sleep timer: draw once, sleep again (unless HA now says otherwise)
+            id(wake_mode) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER ? 1 : 0;
+            id(draw_ok) = id(wake_mode) == 0;
+            ESP_LOGI("sleep", "Boot: %s", id(wake_mode) ? "timer refresh" : "power on");
+        - if:
+            condition:
+              lambda: 'return id(wake_mode) == 1;'
+            then:
+              - script.execute: timer_refresh
+            else:
+              - wait_until:
+                  condition:
+                    lambda: 'return id(ha_ok);'
+                  timeout: 20s
+              - delay: 3s
+              - component.update: epaper_display
+
+# ─────────────────────────────────────────────────────────────
+# Home Assistant entity IDs – check these in
+# Settings → Entities if anything shows 0 on the screen.
+# ─────────────────────────────────────────────────────────────
+substitutions:
+  # ── What this panel shows: true / false ───────────────────────────────────
+  # Match these to the packages you installed in Home Assistant
+  # (packages/panel_<feature>.yaml). Change one → install again.
+  show_energy: "true"     # grid card, 12 h chart, 30-day energy view
+  show_solar: "true"      # solar card, solar + forecast lines on the chart, solar in the 30-day view
+  show_water: "true"      # water today / this week, 30-day water view
+  show_heating: "true"    # heating view, heating alert
+  show_agenda: "true"     # calendar + tasks view
+  show_plants: "true"     # plants view (from the E1003), "needs water" alert
+
+  grid_power: sensor.grid_power                     # W, + import / - export (flipped on device)
+  grid_import_energy: sensor.grid_import_energy     # kWh lifetime total
+  grid_export_energy: sensor.grid_export_energy     # kWh lifetime total
+  solar_power: sensor.solar_power                   # W
+  solar_energy: sensor.solar_energy                 # kWh lifetime total
+  solar_forecast: sensor.power_production_now       # W, Forecast.Solar
+  water_today: sensor.panel_water_today            # L today (packages/panel_water.yaml)
+  # Published by the reTerminal E1003 / configuration.yaml (rotating card + top bar)
+  plant_summary: sensor.reterminal_e1003_plant_summary
+  plants_dry: sensor.reterminal_e1003_plants_needing_water
+  rooms_summary: sensor.panel_rooms               # rooms built from HA areas
+  thermostat: climate.utility_room_bolier_heating   # your Generic Thermostat helper (sensor: Heating Leading Temperature)
+  heat_alert: sensor.reterminal_e1003_heating_alert            # set on the E1003 Settings page
+  heat_cost: input_number.heating_cost_per_hour                # £ per hour of boiler run time (HA helper)
+  water_price: input_number.water_price              # £ per m³
+  water_standing: input_number.water_standing_charge            # £ per year
+  waste_water_standing: input_number.waste_water_standing_charge # £ per year
+  # ── Refresh, sleep and card rotation – set in Home Assistant ─────────────
+  # (packages/panel_core.yaml makes these helpers; cards/panels-card.yaml shows them)
+  #   refresh: every minute (always on) or every 5 / 10 / 15 / 30 min / 1 h / 2 h
+  #            with deep sleep in between (the screen keeps the picture)
+  #   stay awake: on = never sleep (for updates over Wi-Fi); takes effect at the next wake
+  diy_refresh: input_select.diy_panel_refresh
+  diy_cards: input_select.diy_panel_card_change
+  diy_awake: input_boolean.diy_panel_stay_awake
+
+# Save restored values (today baselines, weekly water) at most every 10 min
+# to spare the flash.
+preferences:
+  flash_write_interval: 10min
+
+esp32:
+  board: esp32-s3-devkitc-1        # XIAO ESP32-S3 Plus on the TRMNL driver board
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  on_client_connected:
+    - lambda: 'if (client_info.find("Home Assistant") != std::string::npos) id(ha_ok) = true;'
+  on_client_disconnected:
+    - lambda: 'if (client_info.find("Home Assistant") != std::string::npos) id(ha_ok) = false;'
+  encryption:
+    key: !secret trmnl_diy__encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret trmnl_diy__ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "TRMNL DIY Hotspot"
+    password: !secret fallback_password
+
+captive_portal:
+
+# ─────────────────────────────────────────────────────────────
+# Fonts – Inter in a few weights + Material Design Icons
+# ─────────────────────────────────────────────────────────────
+font:
+  - file: "gfonts://Inter@800"
+    id: f_clock
+    size: 46
+    glyphs: "0123456789:"
+  - file: "gfonts://Inter@800"
+    id: f_temp
+    size: 36
+    glyphs: "-.0123456789°"
+  - file: "gfonts://Inter@600"
+    id: f_cond
+    size: 18
+    glyphs: &txt ' !"%''()+,-./0123456789:?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz£°·³↑↓#=&@_ąćęłńóśźżĄĆĘŁŃÓŚŹŻéèàüöäÉ'
+  - file: "gfonts://Inter@800"
+    id: f_value
+    size: 26
+    glyphs: *txt
+  - file: "gfonts://Inter@500"
+    id: f_small
+    size: 13
+    glyphs: *txt
+  - file: "gfonts://Inter@700"
+    id: f_label
+    size: 12
+    glyphs: *txt
+  - file: "gfonts://Inter@600"
+    id: f_tiny
+    size: 11
+    glyphs: *txt
+  - file: "gfonts://Inter@600"            # solar / grid and agenda text
+    id: f_mid
+    size: 16
+    glyphs: *txt
+  - file: "gfonts://Inter@700"            # their headings
+    id: f_head
+    size: 15
+    glyphs: *txt
+
+  - file:
+      type: web
+      url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: f_wx_icon
+    size: 44
+    glyphs: [
+      "\U000F0599", # sunny
+      "\U000F0594", # clear-night
+      "\U000F0590", # cloudy
+      "\U000F0595", # partly-cloudy
+      "\U000F0591", # fog
+      "\U000F059D", # windy
+      "\U000F059E", # windy-variant
+      "\U000F0592", # hail
+      "\U000F0593", # lightning
+      "\U000F067E", # lightning-rainy
+      "\U000F0596", # pouring
+      "\U000F0597", # rainy
+      "\U000F0598", # snowy
+      "\U000F067F", # snowy-rainy
+      "\U000F05D6", # alert / exceptional
+    ]
+  - file:
+      type: web
+      url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: f_wx_sm                    # 3 h forecast strip
+    size: 20
+    glyphs: [
+      "\U000F0599", # sunny
+      "\U000F0594", # clear-night
+      "\U000F0590", # cloudy
+      "\U000F0595", # partly-cloudy
+      "\U000F0591", # fog
+      "\U000F059D", # windy
+      "\U000F059E", # windy-variant
+      "\U000F0592", # hail
+      "\U000F0593", # lightning
+      "\U000F067E", # lightning-rainy
+      "\U000F0596", # pouring
+      "\U000F0597", # rainy
+      "\U000F0598", # snowy
+      "\U000F067F", # snowy-rainy
+      "\U000F05D6", # alert / exceptional
+    ]
+  - file:
+      type: web
+      url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: f_icon
+    size: 20
+    glyphs: [
+      "\U000F0A72", # solar-power
+      "\U000F0D3E", # transmission-tower
+      "\U000F058C", # water
+      "\U000F0241", # flash
+      "\U000F0238", # fire        (heating, when energy is off)
+      "\U000F0438", # radiator
+      "\U000F00ED", # calendar    (agenda, when energy and heating are off)
+      "\U000F0130", # checkbox-blank-circle-outline
+    ]
+  - file:
+      type: web
+      url: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: f_icon_xs
+    size: 14
+    glyphs: [
+      "\U000F061A", # chip
+      "\U000F091F", "\U000F0922", "\U000F0925", "\U000F0928",   # wifi-strength-1 … 4
+      "\U000F092E", # wifi-strength-off-outline
+      "\U000F1502", # water-alert
+      "\U000F1531", # thermometer-off
+      "\U000F07D0", # home-assistant
+      "\U000F05E1", # check-circle-outline
+      "\U000F04B2", # sleep
+      "\U000F0238", # fire
+      "\U000F0438", # radiator
+      "\U000F0AD8", # radiator-off
+      "\U000F00ED", # calendar
+      "\U000F0130", # checkbox-blank-circle-outline
+      "\U000F007A", "\U000F007C", "\U000F007E", "\U000F0080", "\U000F0082", "\U000F0079",  # battery 10 … 100
+      "\U000F0083", # battery-alert
+      "\U000F050F", # thermometer
+    ]
+
+# ─────────────────────────────────────────────────────────────
+# "Today" counters
+# The energy sensors are lifetime totals, so each is snapshotted at
+# midnight and "today" = current - snapshot. Snapshots survive
+# reboots; after the very first flash they count from boot until
+# the first midnight.
+# ─────────────────────────────────────────────────────────────
+globals:
+  - id: ha_ok                      # Home Assistant connected over the API
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: wake_mode                  # 1 = woken by the timer: draw once, sleep again; 0 = awake
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: draw_ok                    # false while a timer wake waits for Home Assistant's data
+    type: bool
+    restore_value: false
+    initial_value: "true"
+  - id: going_sleep                # the frame being drawn is the last one before sleeping
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: grid_avg                   # 1-minute rolling averages (W) for the solar + grid card
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+  - id: solar_avg
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+  - id: next_wake                  # next scheduled refresh, seconds after midnight
+    type: int
+    restore_value: false
+    initial_value: "-1"
+  - id: base_doy                   # day of the year the "today" baselines belong to
+    type: int
+    restore_value: true
+    initial_value: "-1"
+  - id: base_import
+    type: float
+    restore_value: true
+    initial_value: "NAN"
+  - id: base_export
+    type: float
+    restore_value: true
+    initial_value: "NAN"
+  - id: base_solar
+    type: float
+    restore_value: true
+    initial_value: "NAN"
+  # Water per weekday (index 0 = Monday), kept on the device
+  - id: water_week
+    type: std::array<float, 7>
+    restore_value: true
+    initial_value: "std::array<float, 7>{}"
+
+# ─────────────────────────────────────────────────────────────
+# Data from Home Assistant
+# ─────────────────────────────────────────────────────────────
+text_sensor:
+  - platform: homeassistant              # refresh / sleep (Home Assistant helper)
+    entity_id: ${diy_refresh}
+    id: diy_refresh
+    internal: true
+  - platform: homeassistant              # how often the rotating card changes
+    entity_id: ${diy_cards}
+    id: diy_cards
+    internal: true
+  - platform: homeassistant
+    entity_id: weather.forecast_home
+    id: myWeather
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.current_date
+    id: ha_date
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.current_day_of_week
+    id: ha_day
+    internal: true
+  # 3 h forecast (template sensor in configuration.yaml)
+  - platform: homeassistant
+    entity_id: sensor.weather_forecast_3h
+    attribute: slots
+    id: wx_slots
+    internal: true
+  # Water per weekday this week, litres ("Panel Water History" in configuration.yaml)
+  - platform: homeassistant
+    entity_id: sensor.panel_water_history
+    attribute: week
+    id: wh_week
+    internal: true
+  - platform: homeassistant                # litres, last 7 days (today last)
+    entity_id: sensor.panel_water_history
+    attribute: last7
+    id: wh_last7
+    internal: true
+  # last 30 days of water (litres) + day numbers, for the 30-day water view
+  - platform: homeassistant
+    entity_id: sensor.panel_water_history
+    attribute: daily
+    id: wh_d
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_water_history
+    attribute: daily_lbl
+    id: wh_dlbl
+    internal: true
+  # Calendar + tasks (sensor "Panel Agenda" in configuration.yaml)
+  - platform: homeassistant
+    entity_id: sensor.panel_agenda
+    attribute: events
+    id: ag_events
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_agenda
+    attribute: tasks
+    id: ag_tasks
+    internal: true
+  # Heating over its daily / weekly limit (published by the E1003, "" = fine)
+  - platform: homeassistant
+    entity_id: ${heat_alert}
+    id: heat_alert
+    internal: true
+  # Plants (published by the E1003)
+  - platform: homeassistant
+    entity_id: ${plant_summary}
+    id: plant_summary
+    internal: true
+  # Heating
+  - platform: homeassistant
+    entity_id: ${rooms_summary}
+    attribute: lead_name
+    id: heat_lead
+    internal: true
+  - platform: homeassistant
+    entity_id: ${thermostat}
+    id: heat_mode
+    internal: true
+  - platform: homeassistant
+    entity_id: ${thermostat}
+    attribute: hvac_action
+    id: heat_action
+    internal: true
+  - platform: homeassistant
+    entity_id: ${rooms_summary}
+    attribute: offline
+    id: rooms_offline
+    internal: true
+  - platform: homeassistant
+    entity_id: ${rooms_summary}
+    attribute: coldest_room
+    id: rooms_cold_name
+    internal: true
+  - platform: homeassistant
+    entity_id: ${rooms_summary}
+    attribute: warmest_room
+    id: rooms_warm_name
+    internal: true
+  # Energy history, last 30 days (SQL sensor in configuration.yaml)
+  - platform: homeassistant
+    entity_id: sensor.panel_energy_daily
+    attribute: imp
+    id: en_d_imp
+    internal: true
+  - platform: homeassistant                # kWh imported, last 7 days (today last)
+    entity_id: sensor.panel_energy_daily
+    attribute: last7_imp
+    id: en_last7_imp
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_energy_daily
+    attribute: sol
+    id: en_d_sol
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_energy_daily
+    attribute: exp
+    id: en_d_exp
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_energy_daily
+    attribute: lbl
+    id: en_d_lbl
+    internal: true
+
+  # 12 h chart history (SQL sensor "Power History 12h" in configuration.yaml)
+  - platform: homeassistant
+    entity_id: sensor.panel_power_12h
+    attribute: grid
+    id: hist_grid
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_power_12h
+    attribute: solar
+    id: hist_solar
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_power_12h
+    attribute: forecast
+    id: hist_forecast
+    internal: true
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time:
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        then:
+          - lambda: |-
+              if (!std::isnan(id(myGridImport).state)) id(base_import) = id(myGridImport).state;
+              if (!std::isnan(id(myGridExport).state)) id(base_export) = id(myGridExport).state;
+              if (!std::isnan(id(mySolarTotal).state)) id(base_solar)  = id(mySolarTotal).state;
+              // new day: clear last week's water figures for today
+              auto t = id(ha_time).now();
+              if (t.is_valid()) {
+                int d = (t.day_of_week + 5) % 7;
+                id(water_week)[d] = 0;
+                id(base_doy) = t.day_of_year;
+              }
+
+sensor:
+  # ── Rotating card + top bar data from HA ──
+  - platform: homeassistant
+    entity_id: ${plants_dry}
+    id: plants_dry
+    internal: true
+  - platform: homeassistant
+    entity_id: ${rooms_summary}
+    attribute: offline_count
+    id: rooms_off_n
+    internal: true
+  - platform: homeassistant
+    entity_id: ${rooms_summary}
+    attribute: average
+    id: rooms_avg
+    internal: true
+  - platform: homeassistant
+    entity_id: ${rooms_summary}
+    attribute: coldest_temp
+    id: rooms_cold_t
+    internal: true
+  - platform: homeassistant
+    entity_id: ${rooms_summary}
+    attribute: warmest_temp
+    id: rooms_warm_t
+    internal: true
+  - platform: homeassistant
+    entity_id: ${thermostat}
+    attribute: current_temperature
+    id: heat_cur
+    internal: true
+  - platform: homeassistant
+    entity_id: ${thermostat}
+    attribute: temperature
+    id: heat_target
+    internal: true
+  # Boiler run time (history_stats in configuration.yaml) and cost per hour (E1003)
+  - platform: homeassistant
+    entity_id: sensor.heating_on_today
+    id: ht_today
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.heating_on_this_week
+    id: ht_week
+    internal: true
+  - platform: homeassistant
+    entity_id: ${heat_cost}
+    id: heat_cost_h
+    internal: true
+  # boiler hours on each of the last 6 days (bills view)
+  - platform: homeassistant
+    entity_id: sensor.heating_on_day_1
+    id: ht_1
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.heating_on_day_2
+    id: ht_2
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.heating_on_day_3
+    id: ht_3
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.heating_on_day_4
+    id: ht_4
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.heating_on_day_5
+    id: ht_5
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.heating_on_day_6
+    id: ht_6
+    internal: true
+
+  # ── On-board readings (also visible in HA) ──
+  - platform: adc
+    pin: GPIO1
+    name: "Battery Voltage"
+    id: battery_voltage
+    attenuation: 12db
+    update_interval: 60s
+    filters:
+      - multiply: 2.0
+  - platform: template
+    name: "Battery Level"
+    id: battery_level
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    accuracy_decimals: 0
+    lambda: return id(battery_voltage).state;
+    update_interval: 60s
+    filters:
+      - calibrate_linear:
+          method: exact          # piecewise Li-ion curve from Seeed
+          datapoints:
+            - 3.27 -> 0.0
+            - 3.30 -> 5.0
+            - 3.41 -> 10.0
+            - 3.49 -> 20.0
+            - 3.58 -> 30.0
+            - 3.68 -> 40.0
+            - 3.75 -> 50.0
+            - 3.80 -> 60.0
+            - 3.85 -> 70.0
+            - 3.91 -> 80.0
+            - 3.96 -> 90.0
+            - 4.15 -> 100.0
+      - clamp:
+          min_value: 0
+          max_value: 100
+  - platform: internal_temperature
+    name: "Chip Temperature"
+    id: chip_temp
+    update_interval: 60s
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: wifi_rssi
+    update_interval: 60s
+
+  # Weather
+  - platform: homeassistant
+    entity_id: weather.forecast_home
+    attribute: temperature
+    id: myTemperature
+    internal: true
+  - platform: homeassistant
+    entity_id: weather.forecast_home
+    attribute: pressure
+    id: myPressure
+    internal: true
+
+  # Live power (W)
+  - platform: homeassistant
+    entity_id: ${grid_power}
+    id: myGridConsumption       # flipped so + = export, - = import
+    filters:
+      - multiply: -1
+    internal: true
+  - platform: homeassistant
+    entity_id: ${solar_power}
+    id: mySolarProduction
+    filters:
+      - lambda: return std::max(0.0f, x);   # inverter standby reads slightly negative
+    internal: true
+  - platform: homeassistant
+    entity_id: ${solar_forecast}
+    id: mySolarPrediction
+    internal: true
+
+  # Energy totals. A baseline is set the first time a value arrives,
+  # and reset to 0 if the sensor itself rolls over.
+  - platform: homeassistant
+    entity_id: ${grid_import_energy}
+    id: myGridImport
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(id(base_import)) || x < id(base_import)) id(base_import) = std::isnan(id(base_import)) ? x : 0;
+  - platform: homeassistant
+    entity_id: ${grid_export_energy}
+    id: myGridExport
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(id(base_export)) || x < id(base_export)) id(base_export) = std::isnan(id(base_export)) ? x : 0;
+  - platform: homeassistant
+    entity_id: ${solar_energy}
+    id: mySolarTotal
+    internal: true
+    on_value:
+      - lambda: |-
+          if (std::isnan(id(base_solar)) || x < id(base_solar)) id(base_solar) = std::isnan(id(base_solar)) ? x : 0;
+
+  # Water used today (L) – also logged into today's slot of the week
+  - platform: homeassistant
+    entity_id: ${water_today}
+    id: myWaterToday
+    internal: true
+    on_value:
+      - lambda: |-
+          auto t = id(ha_time).now();
+          if (t.is_valid()) id(water_week)[(t.day_of_week + 5) % 7] = x;
+
+  # Water price (£/m³)
+  - platform: homeassistant
+    entity_id: ${water_price}
+    id: water_price
+    internal: true
+
+  # Water + waste water standing charges (£/year)
+  - platform: homeassistant
+    entity_id: ${water_standing}
+    id: water_standing_charge
+    internal: true
+  - platform: homeassistant
+    entity_id: ${waste_water_standing}
+    id: waste_water_standing_charge
+    internal: true
+
+  # Weekly grid usage (kWh)
+  - platform: homeassistant
+    entity_id: input_number.grid_energy_monday
+    id: energy_monday
+    internal: true
+  - platform: homeassistant
+    entity_id: input_number.grid_energy_tuesday
+    id: energy_tuesday
+    internal: true
+  - platform: homeassistant
+    entity_id: input_number.grid_energy_wednesday
+    id: energy_wednesday
+    internal: true
+  - platform: homeassistant
+    entity_id: input_number.grid_energy_thursday
+    id: energy_thursday
+    internal: true
+  - platform: homeassistant
+    entity_id: input_number.grid_energy_friday
+    id: energy_friday
+    internal: true
+  - platform: homeassistant
+    entity_id: input_number.grid_energy_saturday
+    id: energy_saturday
+    internal: true
+  - platform: homeassistant
+    entity_id: input_number.grid_energy_sunday
+    id: energy_sunday
+    internal: true
+
+  # Tariff (£/kWh) and standing charge (£/day)
+  - platform: homeassistant
+    entity_id: input_number.energy_standing_charge
+    id: energy_standing_charge
+    internal: true
+  - platform: homeassistant
+    entity_id: input_number.energy_price
+    id: energy_price
+    internal: true
+
+# Boiler actively heating (template "Boiler Active" in configuration.yaml)
+binary_sensor:
+  # Refresh button: redraw now (it also wakes the panel from sleep)
+  - platform: gpio
+    pin:
+      number: GPIO2
+      mode: INPUT_PULLUP
+      inverted: true
+      allow_other_uses: true       # also the deep sleep wake-up pin
+    id: key_refresh
+    name: "Refresh button"
+    on_press:
+      - lambda: 'if (id(going_sleep)) id(going_sleep) = false;'
+      - component.update: epaper_display
+  - platform: homeassistant
+    entity_id: binary_sensor.boiler_active
+    id: boiler_on
+    internal: true
+  - platform: homeassistant              # never sleep (for updates over Wi-Fi)
+    entity_id: ${diy_awake}
+    id: diy_awake
+    internal: true
+
+# ─────────────────────────────────────────────────────────────
+# Display – Waveshare 7.5" V2 (800×480)
+# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Refresh + sleep (helpers in Home Assistant, see substitutions)
+# ─────────────────────────────────────────────────────────────
+deep_sleep:
+  id: deep_sleep_ctl
+  wakeup_pin:                      # refresh button wakes the panel
+    number: GPIO2
+    mode: INPUT_PULLUP
+    inverted: true
+    allow_other_uses: true
+  wakeup_pin_mode: KEEP_AWAKE
+
+script:
+  # A new day that began while the panel slept: start today's kWh from now
+  # (the panel wakes on the 5 / 10 / 15 … min marks, so there's a wake at midnight)
+  - id: day_check
+    then:
+      - lambda: |-
+          auto t = id(ha_time).now();
+          if (!t.is_valid() || id(base_doy) == t.day_of_year) return;
+          if (id(base_doy) >= 0) {
+            if (!std::isnan(id(myGridImport).state)) id(base_import) = id(myGridImport).state;
+            if (!std::isnan(id(myGridExport).state)) id(base_export) = id(myGridExport).state;
+            if (!std::isnan(id(mySolarTotal).state)) id(base_solar)  = id(mySolarTotal).state;
+            id(water_week)[(t.day_of_week + 5) % 7] = 0;
+          }
+          id(base_doy) = t.day_of_year;
+  # Deep sleep until the next refresh mark (+10 s)
+  - id: enter_sleep
+    then:
+      - lambda: |-
+          const std::string &r = id(diy_refresh).state;
+          int iv = 0;
+          for (char c : r) { if (c >= '0' && c <= '9') iv = iv * 10 + (c - '0'); else if (iv) break; }
+          if (iv == 0) iv = 1;
+          if (r.find("hour") != std::string::npos) iv *= 60;
+          iv = std::max(5, iv) * 60;
+          int left = iv;
+          auto t = id(ha_time).now();
+          if (t.is_valid() && id(next_wake) >= 0) {
+            const int secs = t.hour * 3600 + t.minute * 60 + t.second;
+            left = ((id(next_wake) - secs) % 86400 + 86400) % 86400;
+            if (left < 20 || left > iv) left = left < 20 ? left + iv : iv;
+          }
+          ESP_LOGI("sleep", "Sleeping %d s", left + 10);
+          id(deep_sleep_ctl).set_sleep_duration((uint32_t) (left + 10) * 1000u);
+          id(deep_sleep_ctl).begin_sleep(true);
+  # Woken by the timer: wait for Home Assistant, draw once, sleep again – unless
+  # Home Assistant now says "every minute" or "stay awake"
+  - id: timer_refresh
+    mode: single
+    then:
+      - wait_until:
+          condition:
+            lambda: 'return id(ha_ok) && id(ha_time).now().is_valid();'
+          timeout: 60s
+      - if:
+          condition:
+            lambda: 'return !id(ha_ok);'
+          then:
+            - logger.log: "Timer wake: no Home Assistant – sleeping again"
+            - script.execute: enter_sleep      # keeps the last picture
+      - delay: 6s                          # all the states arrive after the connection
+      - script.execute: day_check
+      - lambda: |-
+          const bool always = id(diy_refresh).state.find("minute") != std::string::npos &&
+                              id(diy_refresh).state.find("min ") == std::string::npos;
+          if (always || id(diy_awake).state) {
+            ESP_LOGI("sleep", "Staying awake (Home Assistant setting)");
+            id(wake_mode) = 0;
+          }
+          id(draw_ok) = true;
+      - component.update: epaper_display
+      - delay: 8s                          # let the panel finish its refresh
+      - if:
+          condition:
+            lambda: 'return id(wake_mode) == 1;'
+          then:
+            - script.execute: enter_sleep
+
+interval:
+  # 1-minute rolling averages for the solar + grid card (12 samples, 5 s apart)
+  - interval: 5s
+    then:
+      - lambda: |-
+          static float gr[12], sr[12];
+          static int n = 0, k = 0;
+          const float g = id(myGridConsumption).state, so = id(mySolarProduction).state;
+          if (std::isnan(g)) return;
+          gr[k] = g;
+          sr[k] = std::isnan(so) ? 0.0f : so;
+          k = (k + 1) % 12;
+          if (n < 12) n++;
+          float a = 0, b = 0;
+          for (int i = 0; i < n; i++) { a += gr[i]; b += sr[i]; }
+          id(grid_avg) = a / n;
+          id(solar_avg) = b / n;
+  # Awake: redraw every 30 s. Sleep set in Home Assistant (and not "stay awake"):
+  # draw once more with the "asleep" note and sleep.
+  - interval: 30s
+    then:
+      - script.execute: day_check
+      - if:
+          condition:
+            lambda: 'return id(wake_mode) == 0 && !id(going_sleep);'
+          then:
+            - lambda: |-
+                const std::string &r = id(diy_refresh).state;
+                const bool known = !r.empty() && r != "unknown" && r != "unavailable";
+                const bool always = r.find("minute") != std::string::npos && r.find("min ") == std::string::npos;
+                if (known && !always && !id(diy_awake).state && id(ha_ok) && millis() > 90000) {
+                  ESP_LOGI("sleep", "Sleep is on in Home Assistant – going to sleep");
+                  id(going_sleep) = true;
+                }
+            - component.update: epaper_display
+            - if:
+                condition:
+                  lambda: 'return id(going_sleep);'
+                then:
+                  - delay: 8s
+                  - script.execute: enter_sleep
+
+# Battery voltage divider switch (on at boot)
+output:
+  - platform: gpio
+    pin: GPIO6
+    id: bsp_battery_enable
+
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+
+display:
+  - platform: waveshare_epaper
+    id: epaper_display
+    cs_pin: GPIO44
+    dc_pin: GPIO10
+    busy_pin:
+      inverted: true
+      number: GPIO4
+    reset_pin: GPIO38
+    model: 7.50inv2alt
+    update_interval: never          # driven by the interval below (every 30 s when awake)
+    auto_clear_enabled: true
+    # full_update_every isn't supported for 7.50inv2alt in ESPHome 2026.10+
+    # (this model always does a full refresh).
+    lambda: |-
+      if (!id(draw_ok)) return;           // timer wake: keep the last picture until the data is in
+      // ───────── helpers ─────────
+      auto rbox = [&](int x, int y, int w, int h, int r, Color c) {
+        it.filled_rectangle(x + r, y, w - 2 * r, h, c);
+        it.filled_rectangle(x, y + r, w, h - 2 * r, c);
+        it.filled_circle(x + r, y + r, r, c);
+        it.filled_circle(x + w - r - 1, y + r, r, c);
+        it.filled_circle(x + r, y + h - r - 1, r, c);
+        it.filled_circle(x + w - r - 1, y + h - r - 1, r, c);
+      };
+      auto card = [&](int x, int y, int w, int h, bool dark) {
+        rbox(x, y, w, h, 12, COLOR_ON);
+        if (!dark) rbox(x + 2, y + 2, w - 4, h - 4, 10, COLOR_OFF);
+      };
+      auto nz = [](float v) { return std::isnan(v) ? 0.0f : v; };
+      auto today_of = [&](float v, float base) {
+        if (std::isnan(v) || std::isnan(base)) return 0.0f;
+        return std::max(0.0f, v - base);
+      };
+
+      auto now = id(ha_time).now();
+
+      // day + date from the panel's own clock (HA's date sensors only as a fallback)
+      char day_s[16], date_s[24];
+      {
+        static const char *DN[7] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+        static const char *MN[12] = {"January", "February", "March", "April", "May", "June", "July",
+                                     "August", "September", "October", "November", "December"};
+        if (now.is_valid()) {
+          snprintf(day_s, sizeof(day_s), "%s", DN[(now.day_of_week + 6) % 7]);
+          snprintf(date_s, sizeof(date_s), "%d %s %d", now.day_of_month, MN[(now.month + 11) % 12], now.year);
+        } else {
+          snprintf(day_s, sizeof(day_s), "%s", id(ha_day).state.c_str());
+          snprintf(date_s, sizeof(date_s), "%s", id(ha_date).state.c_str());
+        }
+      }
+      // refresh + sleep (Home Assistant helpers): minutes between refreshes, minutes per card
+      auto minutes_of = [](const std::string &r, int def) -> int {
+        if (r.empty() || r == "unknown" || r == "unavailable") return def;
+        int n = 0;
+        for (char c : r) { if (c >= '0' && c <= '9') n = n * 10 + (c - '0'); else if (n) break; }
+        if (n == 0) n = 1;
+        if (r.find("hour") != std::string::npos) n *= 60;
+        return n;
+      };
+      const int refresh_min = minutes_of(id(diy_refresh).state, 1);
+      const int card_min = std::max(1, minutes_of(id(diy_cards).state, 5));
+      const bool sleepy = id(wake_mode) == 1 || id(going_sleep);
+      char upd_s[8] = "--:--", next_s[8] = "--:--", sdate_s[20] = "";
+      if (now.is_valid()) {
+        const int secs = now.hour * 3600 + now.minute * 60 + now.second;
+        const int iv = std::max(5, refresh_min) * 60;
+        int nxt = (secs / iv + 1) * iv;                       // on the 5 / 10 / 15 … min marks
+        if (nxt - secs < 45) nxt += iv;
+        if (sleepy) id(next_wake) = nxt % 86400;              // the sleep uses this
+        snprintf(upd_s, sizeof(upd_s), "%02d:%02d", now.hour, now.minute);
+        snprintf(next_s, sizeof(next_s), "%02d:%02d", (nxt / 3600) % 24, (nxt / 60) % 60);
+        snprintf(sdate_s, sizeof(sdate_s), "%.3s %d %.3s", day_s, now.day_of_month, date_s + (now.day_of_month >= 10 ? 3 : 2));
+      }
+      float price    = nz(id(energy_price).state);
+      float standing = nz(id(energy_standing_charge).state);
+
+      float import_today = today_of(id(myGridImport).state, id(base_import));
+      float export_today = today_of(id(myGridExport).state, id(base_export));
+      float solar_today  = today_of(id(mySolarTotal).state, id(base_solar));
+      float water_today  = nz(id(myWaterToday).state);
+      float wprice       = nz(id(water_price).state) / 1000.0f;   // £ per litre
+      float wstanding    = (nz(id(water_standing_charge).state) +
+                            nz(id(waste_water_standing_charge).state)) / 365.0f;  // £ per day
+
+      auto text_w = [&](esphome::font::Font *f, const char *t) -> int {
+        int bx, by, bw, bh;
+        it.get_text_bounds(0, 0, t, f, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+        return bw;
+      };
+
+      // shorten with "..." until it fits (keeps UTF-8 characters whole)
+      auto ellipsize = [&](esphome::font::Font *f, const std::string &src, int maxw) -> std::string {
+        if (text_w(f, src.c_str()) <= maxw) return src;
+        std::string s = src;
+        while (!s.empty()) {
+          do { s.pop_back(); } while (!s.empty() && (s.back() & 0xC0) == 0x80);
+          while (!s.empty() && s.back() == ' ') s.pop_back();
+          if (text_w(f, (s + "...").c_str()) <= maxw) return s + "...";
+        }
+        return std::string("...");
+      };
+      auto split = [](const std::string &rec, std::string *f, int n) -> int {
+        int k = 0;
+        size_t q = 0;
+        while (k < n) {
+          size_t e = rec.find('|', q);
+          if (e == std::string::npos) { f[k++] = rec.substr(q); break; }
+          f[k++] = rec.substr(q, e - q);
+          q = e + 1;
+        }
+        return k;
+      };
+      auto wx = [](const std::string &cond, const char **label) -> const char * {
+        const char *l = "Unknown", *i = "\U000F05D6";
+        if      (cond == "sunny")           { i = "\U000F0599"; l = "Sunny"; }
+        else if (cond == "clear-night")     { i = "\U000F0594"; l = "Clear night"; }
+        else if (cond == "cloudy")          { i = "\U000F0590"; l = "Cloudy"; }
+        else if (cond == "partlycloudy")    { i = "\U000F0595"; l = "Partly cloudy"; }
+        else if (cond == "fog")             { i = "\U000F0591"; l = "Foggy"; }
+        else if (cond == "windy")           { i = "\U000F059D"; l = "Windy"; }
+        else if (cond == "windy-variant")   { i = "\U000F059E"; l = "Breezy"; }
+        else if (cond == "hail")            { i = "\U000F0592"; l = "Hail"; }
+        else if (cond == "lightning")       { i = "\U000F0593"; l = "Lightning"; }
+        else if (cond == "lightning-rainy") { i = "\U000F067E"; l = "Thunderstorm"; }
+        else if (cond == "pouring")         { i = "\U000F0596"; l = "Heavy rain"; }
+        else if (cond == "rainy")           { i = "\U000F0597"; l = "Rainy"; }
+        else if (cond == "snowy")           { i = "\U000F0598"; l = "Snowy"; }
+        else if (cond == "snowy-rainy")     { i = "\U000F067F"; l = "Sleet"; }
+        else if (cond == "exceptional")     { i = "\U000F05D6"; l = "Warning"; }
+        if (label) *label = l;
+        return i;
+      };
+
+      // ───────── features (substitutions at the top) ─────────
+      const bool fE = ${show_energy}, fW = ${show_water}, fH = ${show_heating}, fA = ${show_agenda}, fP = ${show_plants};
+      const bool fS = ${show_solar};
+      // why a card has no data (nullptr = connected)
+      const bool wifi_ok = wifi::global_wifi_component->is_connected();
+      auto offline_msg = [&]() -> const char * {
+        if (!wifi_ok) return "Not connected to Wi-Fi";
+        if (!id(ha_ok)) return "Not connected to Home Assistant";
+        return nullptr;
+      };
+      const bool util = fE || fW || fH;    // right column: bills + 7 days of one utility
+
+      // the 7-day card goes power → water → heating, one step per refresh (asleep: per wake)
+      const bool u_on[3] = {fE, fW, fH};
+      int u_list[3], nu = 0;
+      for (int u = 0; u < 3; u++) if (u_on[u]) u_list[nu++] = u;
+      static int cyc = -1;
+      cyc++;
+      if (sleepy && now.is_valid()) cyc = (now.hour * 60 + now.minute) / std::max(5, refresh_min);
+      const int hu = nu ? u_list[cyc % nu] : 0;
+
+      // agenda records, used by the agenda view and the cards that stand in for switched-off features
+      auto each = [&](const std::string &src, int nf, const std::function<bool(std::string *, int)> &fn) {
+        size_t pos = 0;
+        while (pos < src.size()) {
+          size_t end = src.find(';', pos);
+          if (end == std::string::npos) end = src.size();
+          std::string f[5];
+          const int k = split(src.substr(pos, end - pos), f, nf);
+          pos = end + 1;
+          if (!fn(f, k)) break;
+        }
+      };
+
+      // ───────── CLOCK + DATE ─────────
+      card(24, 30, 368, 76, true);
+      int dx = 38;
+      if (now.is_valid()) {
+        char hm[8];
+        snprintf(hm, sizeof(hm), "%02d:%02d", now.hour, now.minute);
+        it.print(dx, 68, id(f_clock), COLOR_OFF, TextAlign::CENTER_LEFT, hm);
+        dx += text_w(id(f_clock), hm);
+      }
+      it.line(dx + 10, 44, dx + 10, 92, COLOR_OFF);
+      {
+        const char *dy_s = day_s, *dt_s = date_s;
+        char dt2[40];
+        if (sleepy) {                                  // asleep: the time is when this was drawn
+          snprintf(dt2, sizeof(dt2), "%s · next %s", sdate_s, next_s);
+          dy_s = "Updated";
+          dt_s = dt2;
+        }
+        const int dw = 382 - dx - 20;
+        it.print(dx + 20, 56, text_w(id(f_cond), dy_s) <= dw ? id(f_cond) : id(f_small), COLOR_OFF, TextAlign::CENTER_LEFT, dy_s);
+        it.print(dx + 20, 82, text_w(id(f_small), dt_s) <= dw ? id(f_small) : id(f_tiny), COLOR_OFF, TextAlign::CENTER_LEFT, dt_s);
+      }
+
+      // ───────── WEATHER: now + next 24 h in 3 h steps ─────────
+      {                                              // right half, no border: x 404–776
+        const char *label;
+        const char *icon = wx(id(myWeather).state, &label);
+        it.print(424, 68, id(f_wx_icon), TextAlign::CENTER, icon);
+        if (std::isnan(id(myTemperature).state)) it.print(448, 56, id(f_temp), TextAlign::CENTER_LEFT, "--");
+        else it.printf(448, 56, id(f_temp), TextAlign::CENTER_LEFT, "%.0f°", id(myTemperature).state);
+        it.print(450, 84, id(f_tiny), TextAlign::CENTER_LEFT, label);
+        if (!std::isnan(id(myPressure).state))
+          it.printf(450, 97, id(f_tiny), TextAlign::CENTER_LEFT, "%.0f hPa", id(myPressure).state);
+        const std::string &src = id(wx_slots).state;
+        const int sx0 = 534, sw = 30;
+        size_t pos = 0;
+        int n = 0;
+        while (n < 8 && pos < src.size()) {
+          size_t end = src.find(';', pos);
+          if (end == std::string::npos) end = src.size();
+          std::string f[6];                          // HH|condition|temp|rain|light %|daylight %
+          const int k = split(src.substr(pos, end - pos), f, 6);
+          pos = end + 1;
+          if (k < 3) continue;
+          const int x = sx0 + n * sw, cx = x + sw / 2;
+          // solar strip under the slot: black at night, shaded when cloudy, clear when sunny
+          if (fS && k >= 6) {
+            const int light = atoi(f[4].c_str()), day = atoi(f[5].c_str());
+            const int score = light * day / 100;
+            for (int yy = 103; yy < 108; yy++)
+              for (int xx = x + 1; xx < x + sw; xx++) {
+                bool on;
+                if (day <= 0) on = true;                         // night
+                else if (score >= 70) on = false;                // sunny: clear
+                else if (score >= 40) on = ((xx + yy) % 4) == 0; // some cloud: light dots
+                else on = ((xx + yy) % 2) == 0;                  // overcast: half shaded
+                if (on) it.draw_pixel_at(xx, yy, COLOR_ON);
+              }
+          }
+          for (int yy = 38; yy < 100; yy += 3) it.draw_pixel_at(x, yy, COLOR_ON);
+          it.print(cx, 42, id(f_tiny), TextAlign::CENTER, f[0].c_str());
+          it.print(cx, 64, id(f_wx_sm), TextAlign::CENTER, wx(f[1], nullptr));
+          it.printf(cx, 89, id(f_label), TextAlign::CENTER, "%.0f°", atof(f[2].c_str()));
+          n++;
+        }
+        if (n == 0) it.print(652, 68, id(f_tiny), TextAlign::CENTER, offline_msg() ? offline_msg() : "no 3 h forecast yet");
+        else if (fS) it.rectangle(sx0, 102, n * sw + 1, 7);   // frame of the solar strip
+      }
+
+      auto parse_list = [](const std::string &str, float *out, int n) -> int {
+        int cnt = 0;
+        const char *q = str.c_str();
+        if (*q == '[' || *q == '(') q++;                 // HA may send [1, 2, 3]
+        while (*q && cnt < n) {
+          char *e;
+          float v = strtof(q, &e);
+          if (e == q) break;
+          out[cnt++] = v;
+          q = e;
+          if (*q == ',') q++;
+        }
+        return cnt;
+      };
+
+      // the last 7 days, oldest first, today last: HA statistics, else the 30-day history
+      // matched by date; today live from this device
+      auto last7 = [&](bool wat, float *vals) {
+        for (int i = 0; i < 7; i++) vals[i] = 0;
+        parse_list(wat ? id(wh_last7).state : id(en_last7_imp).state, vals, 7);
+        bool none = true;
+        for (int i = 0; i < 6; i++) if (vals[i] > 0) none = false;
+        if (none && now.is_valid()) {
+          float hv[30] = {}, hl[30] = {};
+          const int nv = parse_list(wat ? id(wh_d).state : id(en_d_imp).state, hv, 30);
+          const int nl = parse_list(wat ? id(wh_dlbl).state : id(en_d_lbl).state, hl, 30);
+          if (nl >= nv && nv > 0) {
+            for (int i = 0; i < 6; i++) {                      // match each day by its date
+              const int dom = ESPTime::from_epoch_local(now.timestamp - (6 - i) * 86400).day_of_month;
+              for (int j = nv - 1; j >= std::max(0, nv - 8); j--)
+                if ((int) hl[j] == dom) { vals[i] = hv[j]; break; }
+            }
+          } else if (nv >= 7) {
+            for (int i = 0; i < 6; i++) vals[i] = hv[nv - 7 + i];   // the history ends with today
+          }
+        }
+        vals[6] = wat ? water_today : import_today;
+      };
+
+      // stacked bill segments: power solid · water dotted · heating outlined
+      auto seg = [&](int x, int y, int w, int h, int u) {
+        if (h <= 0) return;
+        if (u == 0) { it.filled_rectangle(x, y, w, h); return; }
+        it.rectangle(x, y, w, h);
+        if (u == 1)
+          for (int yy = y + 2; yy < y + h - 1; yy += 2)
+            for (int xx = x + 2 + (yy / 2) % 2; xx < x + w - 1; xx += 2) it.draw_pixel_at(xx, yy, COLOR_ON);
+      };
+
+      // ───────── SOLAR + GRID (top left) · BILLS (top right) ─────────
+      {
+        const int y = 114, h = 98;
+        auto stat = [&](int x, int w, bool dark, esphome::font::Font *gf, const char *glyph, const char *lab,
+                        const char *sub, const char *val) {
+          const Color fg = dark ? COLOR_OFF : COLOR_ON, bg = dark ? COLOR_ON : COLOR_OFF;
+          card(x, y, w, h, dark);
+          it.filled_circle(x + 30, y + 26, 16, fg);
+          it.print(x + 30, y + 26, gf, bg, TextAlign::CENTER, glyph);
+          it.print(x + 56, y + 26, id(f_label), fg, TextAlign::CENTER_LEFT, lab);
+          it.print(x + 16, y + 60, text_w(id(f_value), val) <= w - 32 ? id(f_value) : id(f_cond), fg,
+                   TextAlign::CENTER_LEFT, val);
+          it.print(x + 16, y + 84, id(f_small), fg, TextAlign::CENTER_LEFT, sub);
+        };
+        char sb[48], vb[24];
+        if (fE) {
+          // one card like the E1003: icon · label + today's kWh · the 1-min average, big
+          const int x = 24, w = 470;
+          card(x, y, w, h, false);
+          auto watts = [](float v, char *o, size_t n) {
+            if (fabsf(v) >= 1000.0f) snprintf(o, n, "%.1f kW", fabsf(v) / 1000.0f);
+            else                     snprintf(o, n, "%.0f W", fabsf(v));
+          };
+          auto half = [&](int hx, int hw, bool solid, const char *glyph, const char *lab, const char *val,
+                          const char *today_s, const char *today_short) {
+            // label (1-min average) · big live value · today's kWh, each on its own line
+            it.filled_circle(hx + 30, y + 50, 17);
+            if (!solid) it.filled_circle(hx + 30, y + 50, 15, COLOR_OFF);
+            it.print(hx + 30, y + 50, id(f_icon), solid ? COLOR_OFF : COLOR_ON, TextAlign::CENTER, glyph);
+            it.print(hx + 58, y + 20, id(f_head), TextAlign::CENTER_LEFT, lab);
+            it.print(hx + 56, y + 50, text_w(id(f_value), val) <= hw - 70 ? id(f_value) : id(f_cond),
+                     TextAlign::CENTER_LEFT, val);
+            const int tmax = hw - 14 - 58;
+            const char *ts = text_w(id(f_mid), today_s) <= tmax ? today_s : today_short;
+            it.print(hx + 58, y + 80, text_w(id(f_mid), ts) <= tmax ? id(f_mid) : id(f_small), TextAlign::CENTER_LEFT, ts);
+          };
+          const float g = std::isnan(id(grid_avg)) ? nz(id(myGridConsumption).state) : id(grid_avg);
+          const bool importing = g < 0;
+          char gv[24], gt[48], gt2[40];
+          watts(g, gv, sizeof(gv));
+          snprintf(gt, sizeof(gt), "today ↓%.1f ↑%.1f kWh", import_today, export_today);
+          snprintf(gt2, sizeof(gt2), "↓%.1f ↑%.1f kWh", import_today, export_today);
+          int gx0 = x, gw0 = w;
+          if (fS) {
+            const float sv = std::max(0.0f, std::isnan(id(solar_avg)) ? nz(id(mySolarProduction).state) : id(solar_avg));
+            char sv_s[24], st[32];
+            watts(sv, sv_s, sizeof(sv_s));
+            snprintf(st, sizeof(st), "%.1f kWh today", solar_today);
+            const int hw = w * 9 / 20;
+            half(x, hw, false, "\U000F0A72", "SOLAR · 1 MIN", sv_s, st, st);
+            for (int yy = y + 12; yy < y + h - 12; yy += 4) it.draw_pixel_at(x + hw, yy, COLOR_ON);
+            gx0 = x + hw; gw0 = w - hw;
+          }
+          half(gx0, gw0, importing, "\U000F0D3E", importing ? "IMPORTING · 1 MIN" : "EXPORTING · 1 MIN", gv, gt, gt2);
+        } else if (fH) {
+          // no energy: heating at a glance instead
+          const bool on = id(heat_mode).state == "heat";
+          const bool heating = id(boiler_on).has_state() ? id(boiler_on).state : on && id(heat_action).state == "heating";
+          const float cur = id(heat_cur).state, tgt = id(heat_target).state;
+          if (std::isnan(cur)) snprintf(vb, sizeof(vb), "--"); else snprintf(vb, sizeof(vb), "%.1f°", cur);
+          if (!on) snprintf(sb, sizeof(sb), "heating off");
+          else if (std::isnan(tgt)) snprintf(sb, sizeof(sb), "%s", id(heat_lead).state.c_str());
+          else snprintf(sb, sizeof(sb), "target %.1f° · %s", tgt, id(heat_lead).state.c_str());
+          stat(24, 229, false, id(f_icon), "\U000F0438", "LEADING ROOM", ellipsize(id(f_small), sb, 197).c_str(), vb);
+          const float hd = id(ht_today).state, hc = nz(id(heat_cost_h).state);
+          const int m = std::isnan(hd) ? -1 : (int) roundf(hd * 60.0f);
+          if (m < 0) snprintf(vb, sizeof(vb), "--");
+          else if (m < 60) snprintf(vb, sizeof(vb), "%dm", m);
+          else snprintf(vb, sizeof(vb), "%dh %02dm", m / 60, m % 60);
+          if (hc > 0 && m >= 0) snprintf(sb, sizeof(sb), "today · £%.2f", hd * hc);
+          else snprintf(sb, sizeof(sb), "%s", heating ? "heating now" : "today");
+          stat(265, 229, heating, id(f_icon), "\U000F0238", heating ? "BOILER ON" : "BOILER", sb, vb);
+        } else if (fA) {
+          // no energy, no heating: next event + open tasks
+          std::string nt = "--", ns = "Nothing planned";
+          each(id(ag_events).state, 5, [&](std::string *f, int k) -> bool {
+            if (k < 4) return true;
+            nt = f[1].empty() ? "all day" : f[1];
+            ns = f[3];
+            return false;
+          });
+          stat(24, 229, false, id(f_icon), "\U000F00ED", "NEXT", ellipsize(id(f_small), ns, 197).c_str(), nt.c_str());
+          int n = 0;
+          std::string first;
+          each(id(ag_tasks).state, 3, [&](std::string *f, int k) -> bool {
+            if (k >= 2) { if (n == 0) first = f[1]; n++; }
+            return true;
+          });
+          snprintf(vb, sizeof(vb), "%d open", n);
+          stat(265, 229, false, id(f_icon), "\U000F0130", "TASKS", ellipsize(id(f_small), n ? first : std::string("all done"), 197).c_str(), vb);
+        }
+        // bills today (power + water + heating) and the last 7 days stacked – like the E1003
+        if (util) {
+          const int x = 506, w = 270;
+          card(x, y, w, h, false);
+          float g3[3][7] = {};
+          if (fE) { float v[7]; last7(false, v); for (int i = 0; i < 7; i++) g3[0][i] = v[i] * price + standing; }
+          if (fW) { float v[7]; last7(true, v);  for (int i = 0; i < 7; i++) g3[1][i] = v[i] * wprice + wstanding; }
+          if (fH) {
+            sensor::Sensor *hd[7] = {id(ht_6), id(ht_5), id(ht_4), id(ht_3), id(ht_2), id(ht_1), id(ht_today)};
+            for (int i = 0; i < 7; i++) g3[2][i] = nz(hd[i]->state) * nz(id(heat_cost_h).state);
+          }
+          float tot[7], mx = 0.01f, wk = 0;
+          for (int i = 0; i < 7; i++) { tot[i] = g3[0][i] + g3[1][i] + g3[2][i]; mx = std::max(mx, tot[i]); wk += tot[i]; }
+          it.print(x + 14, y + 20, id(f_label), TextAlign::CENTER_LEFT, "BILLS TODAY");
+          it.printf(x + 12, y + 54, id(f_value), TextAlign::CENTER_LEFT, "£%.2f", tot[6]);
+          it.printf(x + 14, y + 84, id(f_tiny), TextAlign::CENTER_LEFT, "7 days £%.2f", wk);
+          // mini stacked bars: power solid, water dotted, heating outlined
+          const char *days = "MTWTFSS";
+          const int today_i = now.is_valid() ? (now.day_of_week + 5) % 7 : -1;
+          const int bx0 = x + 126, step = 19, bw = 13, base = y + 74, bmax = 58;
+          for (int i = 0; i < 7; i++) {
+            const int bx = bx0 + i * step;
+            int yy = base;
+            for (int u = 0; u < 3; u++) {
+              const int sh = (int) roundf(g3[u][i] / mx * bmax);
+              if (sh < 2) continue;
+              seg(bx, yy - sh, bw, sh - (sh > 4 ? 1 : 0), u);
+              yy -= sh;
+            }
+            const int wd = today_i >= 0 ? (today_i - 6 + i + 7) % 7 : i;
+            char d[2] = {days[wd], 0};
+            if (i == 6) {
+              it.filled_circle(bx + bw / 2, base + 12, 7);
+              it.print(bx + bw / 2, base + 12, id(f_tiny), COLOR_OFF, TextAlign::CENTER, d);
+            } else {
+              it.print(bx + bw / 2, base + 12, id(f_tiny), TextAlign::CENTER, d);
+            }
+          }
+          it.line(bx0 - 3, base, bx0 + 6 * step + bw + 2, base);
+        }
+      }
+
+      // ───────── ROTATING CARD: 12 h chart · plants · heating · energy · bills · agenda ─────────
+      // views: 0 12 h chart · 1 plants · 2 heating · 3 energy 30 days · 5 water 30 days ·
+      //        6 bills 7 days · 4 agenda. The next one every "card change" minutes (Home
+      //        Assistant helper); asleep, the next one on every wake.
+      // only the features switched on above; plants also skipped when hidden on the E1003
+      const bool plants_on = fP && id(plant_summary).state != "off";
+      const int nbills = (fE ? 1 : 0) + (fW ? 1 : 0) + (fH ? 1 : 0);
+      int views[7], nviews = 0;
+      if (fE) views[nviews++] = 0;
+      if (plants_on) views[nviews++] = 1;
+      if (fH) views[nviews++] = 2;
+      if (nbills >= 2) views[nviews++] = 6;
+      if (fE) views[nviews++] = 3;
+      if (fW) views[nviews++] = 5;
+      if (fA) views[nviews++] = 4;
+      const int per_card = sleepy ? std::max(card_min, std::max(5, refresh_min)) : card_min;
+      const int slot = (now.is_valid() && nviews) ? ((now.hour * 60 + now.minute) / per_card) % nviews : 0;
+      const int view = nviews ? views[slot] : -1;
+      card(24, 222, 470, 240, false);
+      if (view < 0) it.print(259, 346, id(f_small), TextAlign::CENTER, "Nothing switched on - see show_* at the top of the YAML");
+      // which view is showing: dots, bottom-right of the card
+      for (int k = 0; k < nviews && nviews > 1; k++) {
+        int dx = 480 - (nviews - 1 - k) * 12;
+        if (k == slot) it.filled_circle(dx, 453, 3);
+        else           it.circle(dx, 453, 3);
+      }
+
+
+      // ── BILLS · 7 DAYS: power + water + heating per day, stacked; total on top ──
+      if (view == 6) {
+        float g[3][7] = {};                                    // £ per day: power, water, heating
+        if (fE) { float v[7]; last7(false, v); for (int i = 0; i < 7; i++) g[0][i] = v[i] * price + standing; }
+        if (fW) { float v[7]; last7(true, v);  for (int i = 0; i < 7; i++) g[1][i] = v[i] * wprice + wstanding; }
+        if (fH) {
+          sensor::Sensor *hd[7] = {id(ht_6), id(ht_5), id(ht_4), id(ht_3), id(ht_2), id(ht_1), id(ht_today)};
+          const float hc = nz(id(heat_cost_h).state);
+          for (int i = 0; i < 7; i++) g[2][i] = nz(hd[i]->state) * hc;
+        }
+        float tot[7], mx = 0.01f, wk = 0;
+        for (int i = 0; i < 7; i++) { tot[i] = g[0][i] + g[1][i] + g[2][i]; mx = std::max(mx, tot[i]); wk += tot[i]; }
+        it.print(38, 234, id(f_label), "BILLS · 7 DAYS");
+        it.printf(480, 234, id(f_label), TextAlign::TOP_RIGHT, "today £%.2f", tot[6]);
+        it.printf(480, 252, id(f_tiny), TextAlign::TOP_RIGHT, "7 days £%.2f", wk);
+        // power solid · water dotted · heating outlined
+        auto seg = [&](int x, int y, int w, int h, int u) {
+          if (h <= 0) return;
+          if (u == 0) { it.filled_rectangle(x, y, w, h); return; }
+          it.rectangle(x, y, w, h);
+          if (u == 1)
+            for (int yy = y + 2; yy < y + h - 1; yy += 2)
+              for (int xx = x + 2 + (yy / 2) % 2; xx < x + w - 1; xx += 2) it.draw_pixel_at(xx, yy, COLOR_ON);
+        };
+        {
+          static const char *LN[3] = {"Power", "Water", "Heating"};
+          const bool on[3] = {fE, fW, fH};
+          int lg = 38;
+          for (int u = 0; u < 3; u++) {
+            if (!on[u]) continue;
+            seg(lg, 254, 10, 10, u);
+            it.print(lg + 14, 259, id(f_tiny), TextAlign::CENTER_LEFT, LN[u]);
+            lg += 14 + text_w(id(f_tiny), LN[u]) + 12;
+          }
+        }
+        const char *days = "MTWTFSS";
+        const int today_i = now.is_valid() ? (now.day_of_week + 5) % 7 : -1;
+        const int base = 428, bmax = 132, bw = 36, step = 62, bx0 = 50;
+        for (int i = 0; i < 7; i++) {
+          const int bx = bx0 + i * step, cx = bx + bw / 2;
+          int yy = base;
+          for (int u = 0; u < 3; u++) {
+            const int sh = (int) roundf(g[u][i] / mx * bmax);
+            if (sh < 2) continue;
+            seg(bx, yy - sh, bw, sh - (sh > 5 ? 2 : 0), u);    // 2 px gap between utilities
+            yy -= sh;
+          }
+          it.printf(cx, yy - 4, id(f_tiny), TextAlign::BOTTOM_CENTER, tot[i] >= 10 ? "£%.1f" : "£%.2f", tot[i]);
+          const int wd = today_i >= 0 ? (today_i - 6 + i + 7) % 7 : i;
+          char d[2] = {days[wd], 0};
+          if (i == 6) {
+            it.filled_circle(cx, base + 18, 11);
+            it.print(cx, base + 18, id(f_label), COLOR_OFF, TextAlign::CENTER, d);
+          } else {
+            it.print(cx, base + 18, id(f_label), TextAlign::CENTER, d);
+          }
+        }
+        it.line(bx0 - 6, base, bx0 + 6 * step + bw + 6, base);
+      }
+
+      if (view == 0) {
+        it.print(38, 234, id(f_label), "LAST 12 HOURS");
+
+        int lx = 280, ly = 241;
+        for (int i = 0; i < 3; i++) it.line(lx, ly - 1 + i, lx + 18, ly - 1 + i);
+        it.print(lx + 22, ly, id(f_tiny), TextAlign::CENTER_LEFT, "Grid");
+        lx += 62;
+        if (fS) {
+          it.line(lx, ly, lx + 18, ly); it.line(lx, ly + 1, lx + 18, ly + 1);
+          it.print(lx + 22, ly, id(f_tiny), TextAlign::CENTER_LEFT, "Solar");
+          lx += 66;
+          for (int s = 0; s < 18; s += 6) it.line(lx + s, ly, lx + s + 3, ly);
+          it.print(lx + 22, ly, id(f_tiny), TextAlign::CENTER_LEFT, "Forecast");
+        }
+
+        float top_kw = 4.0f;                     // axis top, set from the data below
+        {
+          // 12 h chart from Home Assistant history: 72 ten-minute averages + the live value
+          const int gx = 70, gy = 258, gw = 406, gh = 168, N = 72;
+          auto parse_hist = [](const std::string &str, float *out, int n) {
+            for (int i = 0; i < n; i++) out[i] = NAN;
+            const char *q = str.c_str();
+            if (*q == '[' || *q == '(') q++;                 // HA may send [1, 2, 3]
+            for (int i = 0; i < n; i++) {
+              if (*q != ',' && *q != 0) {
+                char *e;
+                float v = strtof(q, &e);
+                if (e == q) break;          // not a number list (e.g. "unknown")
+                out[i] = v;
+                q = e;
+              }
+              if (*q != ',') break;
+              q++;
+            }
+          };
+          // HA sends the last 20 h (120 values); this chart shows the last 12 h of them
+          float hg[N], hs[N], hf[N];
+          auto last12 = [&](const std::string &src, float *out) {
+            float all[120];
+            parse_hist(src, all, 120);
+            int cnt = 1;                         // list length (120 from HA; older 72-long lists work too)
+            for (char c : src) if (c == ',') cnt++;
+            const int len = std::min(120, cnt), start = std::max(0, len - N);
+            for (int i = 0; i < N; i++) out[i] = (start + i < len) ? all[start + i] : NAN;
+          };
+          last12(id(hist_grid).state, hg);
+          last12(id(hist_solar).state, hs);
+          last12(id(hist_forecast).state, hf);
+          if (!fS) for (int k = 0; k < N; k++) { hs[k] = NAN; hf[k] = NAN; }
+
+          // dotted grid: every 2 kW and every hour
+          for (int k = 0; k <= 4; k++) {
+            int yy = gy + k * (gh - 1) / 4;
+            for (int xx = gx; xx < gx + gw; xx += 2) it.draw_pixel_at(xx, yy, COLOR_ON);
+          }
+          for (int h = 0; h <= 12; h++) {
+            int xx = gx + h * (gw - 1) / 12;
+            for (int yy = gy; yy < gy + gh; yy += 2) it.draw_pixel_at(xx, yy, COLOR_ON);
+          }
+
+          // axis: the biggest value in the chart + 15 %, rounded up (same above and below zero)
+          float peak = std::max(fabsf(nz(id(myGridConsumption).state)), fS ? fabsf(nz(id(mySolarProduction).state)) : 0.0f);
+          for (int k = 0; k < N; k++) {
+            if (!std::isnan(hg[k])) peak = std::max(peak, fabsf(hg[k]));
+            if (!std::isnan(hs[k])) peak = std::max(peak, fabsf(hs[k]));
+            if (!std::isnan(hf[k])) peak = std::max(peak, fabsf(hf[k]));
+          }
+          {
+            static const float st[] = {0.1f, 0.2f, 0.25f, 0.5f, 1, 2, 2.5f, 5, 10, 20, 25, 50};
+            const float v = std::max(0.2f, peak * 1.15f / 1000.0f);
+            top_kw = ceilf(v / 50.0f) * 50.0f;
+            for (float s : st) if (v <= s * 4) { top_kw = ceilf(v / s - 0.001f) * s; break; }
+          }
+          const float top_w = top_kw * 1000.0f;
+          auto ymap = [&](float w) {
+            w = std::max(-top_w, std::min(top_w, w));
+            return gy + (int) roundf((top_w - w) / (2 * top_w) * (gh - 1));
+          };
+          // sign: grid history is + import, the chart shows export above the line
+          auto trace = [&](const float *v, float live, float sign, int th, Color c, bool dashed) {
+            int px = 0, py = 0, seg = 0;
+            bool have = false;
+            for (int k = 0; k <= N; k++) {
+              float val = k < N ? v[k] : live;
+              if (std::isnan(val)) { have = false; continue; }
+              int x = k < N ? gx + (int) roundf((k + 0.5f) * gw / N) : gx + gw - 1;
+              int y = ymap(sign * val);
+              if (have && (!dashed || (seg % 2) == 0)) {
+                for (int dx = 0; dx < th; dx++)
+                  for (int dy = 0; dy < th; dy++)
+                    it.line(px + dx - th / 2, py + dy - th / 2, x + dx - th / 2, y + dy - th / 2, c);
+              }
+              if (have) seg++;
+              px = x; py = y; have = true;
+            }
+          };
+          // live value: myGridConsumption is already flipped to + export on the device
+          if (fS) {
+            trace(hf, id(mySolarPrediction).state, 1.0f, 1, COLOR_ON, true);
+            trace(hs, std::max(0.0f, id(mySolarProduction).state), 1.0f, 2, COLOR_ON, false);
+          }
+          trace(hg, -id(myGridConsumption).state, -1.0f, 3, COLOR_ON, false);
+        }
+        const int gx = 70, gy = 258, gw = 406, gh = 168;
+        it.line(gx, gy + gh / 2, gx + gw, gy + gh / 2);
+        char a[12], b[12], l0[16], l1[16], l3[16], l4[16];
+        auto num = [](float v, char *o, size_t n) {
+          if (fabsf(v - roundf(v)) < 0.05f) snprintf(o, n, "%.0f", v); else snprintf(o, n, "%.1f", v);
+        };
+        num(top_kw, a, sizeof(a)); num(top_kw / 2, b, sizeof(b));
+        snprintf(l0, sizeof(l0), "+%sk", a); snprintf(l1, sizeof(l1), "+%sk", b);
+        snprintf(l3, sizeof(l3), "-%sk", b); snprintf(l4, sizeof(l4), "-%sk", a);
+        const char *ylab[] = {l0, l1, "0", l3, l4};
+        for (int i = 0; i < 5; i++)
+          it.print(gx - 6, gy + i * gh / 4, id(f_tiny), TextAlign::CENTER_RIGHT, ylab[i]);
+        it.print(gx + gw - 2, gy + 2,  id(f_tiny), TextAlign::TOP_RIGHT, "export");
+        it.print(gx + gw - 2, gy + gh - 2, id(f_tiny), TextAlign::BOTTOM_RIGHT, "import");
+        it.print(gx,          gy + gh + 8, id(f_tiny), TextAlign::TOP_LEFT,   "-12h");
+        it.print(gx + gw / 2, gy + gh + 8, id(f_tiny), TextAlign::TOP_CENTER, "-6h");
+        it.print(gx + gw,     gy + gh + 8, id(f_tiny), TextAlign::TOP_RIGHT,  "now");
+      }
+
+      // ── PLANTS: five thirstiest (published by the E1003) ──
+      if (view == 1) {
+        it.print(38, 234, id(f_label), "PLANTS · THIRSTIEST FIRST");
+        float dry = id(plants_dry).state;
+        if (!std::isnan(dry)) {
+          if (dry > 0) it.printf(480, 234, id(f_label), TextAlign::TOP_RIGHT, "%.0f NEED WATER", dry);
+          else         it.print(480, 234, id(f_label), TextAlign::TOP_RIGHT, "ALL WATERED");
+        }
+        const std::string &sum = id(plant_summary).state;
+        int row = 0;
+        size_t pos = 0;
+        while (row < 5 && pos < sum.size()) {
+          size_t end = sum.find(';', pos);
+          if (end == std::string::npos) end = sum.size();
+          std::string item = sum.substr(pos, end - pos);
+          pos = end + 1;
+          size_t a1 = item.find('|'), a2 = item.find('|', a1 == std::string::npos ? 0 : a1 + 1);
+          if (a1 == std::string::npos || a2 == std::string::npos) continue;
+          std::string name = item.substr(0, a1);
+          float left = atof(item.substr(a1 + 1, a2 - a1 - 1).c_str());
+          const size_t a3 = item.find('|', a2 + 1);           // "name|days|pct|room"
+          float pct  = atof(item.substr(a2 + 1, a3 == std::string::npos ? std::string::npos : a3 - a2 - 1).c_str());
+          const std::string room = a3 == std::string::npos ? "" : item.substr(a3 + 1);
+          const int y = 268 + row * 38;
+          if (room.empty()) {
+            it.print(38, y, id(f_cond), TextAlign::CENTER_LEFT, ellipsize(id(f_cond), name, 188).c_str());
+          } else {                                            // name, and the room under it
+            it.print(38, y - 6, id(f_cond), TextAlign::CENTER_LEFT, ellipsize(id(f_cond), name, 188).c_str());
+            it.print(38, y + 11, id(f_tiny), TextAlign::CENTER_LEFT, ellipsize(id(f_tiny), room, 188).c_str());
+          }
+          // level bar
+          it.rectangle(232, y - 7, 120, 14);
+          int fw = (int) (116 * std::max(0.0f, std::min(100.0f, pct)) / 100.0f);
+          if (fw > 0) it.filled_rectangle(234, y - 5, fw, 10);
+          it.printf(360, y, id(f_small), TextAlign::CENTER_LEFT, "%.0f%%", pct);
+          if (left < 1.0f) {
+            rbox(400, y - 9, 80, 18, 9, COLOR_ON);
+            it.print(440, y, id(f_label), COLOR_OFF, TextAlign::CENTER, "WATER");
+          } else {
+            it.printf(480, y, id(f_small), TextAlign::CENTER_RIGHT, "%.1f d", left);
+          }
+          row++;
+        }
+        if (row == 0)
+          it.print(259, 346, id(f_small), TextAlign::CENTER, offline_msg() ? offline_msg() : "No plant data - is the reTerminal E1003 online?");
+      }
+
+      // ── HEATING: leading room, boiler, rooms overview ──
+      if (view == 2) {
+        it.print(38, 234, id(f_label), "HEATING");
+        const std::string mode = id(heat_mode).state, act = id(heat_action).state;
+        const bool on = mode == "heat";
+        // the real boiler state when HA has it, otherwise the thermostat's call for heat
+        const bool heating = id(boiler_on).has_state() ? id(boiler_on).state : on && act == "heating";
+        const char *st = !on ? "OFF" : heating ? "HEATING" : "IDLE";
+        int sw = text_w(id(f_label), st) + 34;
+        rbox(480 - sw, 230, sw, 20, 10, heating ? COLOR_ON : COLOR_OFF);
+        if (!heating) { rbox(480 - sw, 230, sw, 20, 10, COLOR_ON); rbox(481 - sw, 231, sw - 2, 18, 9, COLOR_OFF); }
+        it.print(480 - sw + 14, 240, id(f_icon_xs), heating ? COLOR_OFF : COLOR_ON, TextAlign::CENTER,
+                 !on ? "\U000F0AD8" : heating ? "\U000F0238" : "\U000F0438");
+        it.print(480 - sw + 26, 240, id(f_label), heating ? COLOR_OFF : COLOR_ON, TextAlign::CENTER_LEFT, st);
+
+        // leading room
+        const std::string lead = id(heat_lead).state;
+        it.print(38, 262, id(f_label), "LEADING ROOM");
+        it.print(38, 278, id(f_cond), lead.empty() || lead == "unknown" ? "--" : lead.c_str());
+        float cur = id(heat_cur).state, tgt = id(heat_target).state;
+        if (std::isnan(cur)) it.print(38, 306, id(f_temp), "--");
+        else                 it.printf(38, 306, id(f_temp), "%.1f°", cur);
+        if (!std::isnan(tgt)) {
+          if (heating && !std::isnan(cur)) it.printf(38, 372, id(f_small), "target %.1f° · %.1f° to go", tgt, std::max(0.0f, tgt - cur));
+          else                             it.printf(38, 372, id(f_small), "target %.1f°", tgt);
+        }
+        // boiler run time today / this week (+ cost when the E1003 has a price set)
+        auto hm = [](float h, char *o, size_t n) {
+          int m = (int) roundf(h * 60.0f);
+          if (m < 60) snprintf(o, n, "%dm", m); else snprintf(o, n, "%dh %02dm", m / 60, m % 60);
+        };
+        const float hc = nz(id(heat_cost_h).state);
+        char t1[16], t2[16];
+        if (!std::isnan(id(ht_today).state)) {
+          hm(id(ht_today).state, t1, sizeof(t1));
+          if (hc > 0) it.printf(38, 392, id(f_small), "Today %s · £%.2f", t1, id(ht_today).state * hc);
+          else        it.printf(38, 392, id(f_small), "Today %s", t1);
+        }
+        if (!std::isnan(id(ht_week).state)) {
+          hm(id(ht_week).state, t2, sizeof(t2));
+          if (hc > 0) it.printf(38, 410, id(f_small), "Week %s · £%.2f", t2, id(ht_week).state * hc);
+          else        it.printf(38, 410, id(f_small), "Week %s", t2);
+        }
+
+        // overview on the right
+        it.line(262, 262, 262, 440);
+        auto kv = [&](int y, const char *k, const char *v) {
+          it.print(278, y, id(f_label), k);
+          it.print(480, y - 4, id(f_cond), TextAlign::TOP_RIGHT, v);
+        };
+        char b1[32], b2[48];
+        float avg = id(rooms_avg).state;
+        if (std::isnan(avg)) snprintf(b1, sizeof(b1), "--"); else snprintf(b1, sizeof(b1), "%.1f°", avg);
+        kv(268, "HOUSE AVERAGE", b1);
+        float ct = id(rooms_cold_t).state, wt = id(rooms_warm_t).state;
+        it.print(278, 304, id(f_label), "COLDEST");
+        if (std::isnan(ct)) snprintf(b2, sizeof(b2), "--");
+        else snprintf(b2, sizeof(b2), "%s %.1f°", id(rooms_cold_name).state.c_str(), ct);
+        it.print(278, 318, id(f_cond), b2);
+        it.print(278, 350, id(f_label), "WARMEST");
+        if (std::isnan(wt)) snprintf(b2, sizeof(b2), "--");
+        else snprintf(b2, sizeof(b2), "%s %.1f°", id(rooms_warm_name).state.c_str(), wt);
+        it.print(278, 364, id(f_cond), b2);
+        float off = id(rooms_off_n).state;
+        if (!std::isnan(off) && off > 0) {
+          std::string names = id(rooms_offline).state;
+          if (names.size() > 34) names = names.substr(0, 32) + "...";
+          it.printf(278, 404, id(f_label), "%.0f OFFLINE", off);
+          it.print(278, 420, id(f_tiny), names.c_str());
+        } else if (!std::isnan(off)) {
+          it.print(278, 404, id(f_label), "ALL ROOM SENSORS OK");
+        }
+        if (!std::isnan(id(myTemperature).state))
+          it.printf(38, 430, id(f_small), "Outside %.0f°", id(myTemperature).state);
+      }
+
+      // ── ENERGY: last 30 days ──
+      if (view == 3) {
+        float imp[30] = {}, sol[30] = {}, exp_[30] = {}, lbl[30] = {};
+        int nd = parse_list(id(en_d_imp).state, imp, 30);
+        parse_list(id(en_d_sol).state, sol, 30);
+        parse_list(id(en_d_exp).state, exp_, 30);
+        const int nlb = parse_list(id(en_d_lbl).state, lbl, 30);
+        if (nlb < nd && now.is_valid())                  // no day labels from HA: count back from today
+          for (int i = 0; i < nd; i++) lbl[i] = ESPTime::from_epoch_local(now.timestamp - (nd - 1 - i) * 86400).day_of_month;
+        it.print(38, 234, id(f_label), "ENERGY · LAST 30 DAYS");
+        if (nd == 0) {
+          it.print(259, 346, id(f_small), TextAlign::CENTER, offline_msg() ? offline_msg() : "No energy history yet");
+        } else {
+          float si = 0, ss = 0, se = 0;
+          for (int i = 0; i < nd; i++) { si += imp[i]; ss += sol[i]; se += exp_[i]; }
+          float use = si + ss - se;
+          float share = use > 0 ? std::max(0.0f, std::min(100.0f, (ss - se) / use * 100.0f)) : 0.0f;
+          it.printf(480, 234, id(f_label), TextAlign::TOP_RIGHT, "£%.2f", si * price + nd * standing);
+          char v[16];
+          auto stat = [&](int k, const char *l, const char *val) {
+            int x = 38 + k * 112;
+            it.print(x, 254, id(f_tiny), l);
+            it.print(x, 268, id(f_cond), val);
+          };
+          snprintf(v, sizeof(v), "%.0f kWh", si);   stat(0, "IMPORTED", v);
+          if (fS) {
+            snprintf(v, sizeof(v), "%.0f kWh", ss);   stat(1, "SOLAR", v);
+            snprintf(v, sizeof(v), "%.0f%%", share);  stat(2, "SOLAR SHARE", v);
+          } else {
+            snprintf(v, sizeof(v), "%.0f kWh", se);   stat(1, "EXPORTED", v);
+            snprintf(v, sizeof(v), "£%.2f", (si * price + nd * standing) / nd); stat(2, "COST/DAY", v);
+          }
+          snprintf(v, sizeof(v), "%.1f kWh", si / nd); stat(3, "DAILY AVG", v);
+
+          // 30 daily bars: import filled, solar outline
+          const int px0 = 40, px1 = 478, top = 306, base = 432;
+          float mx = 0.1f;
+          for (int i = 0; i < nd; i++) mx = std::max(mx, std::max(imp[i], sol[i]));
+          const float slot = (px1 - px0) / 30.0f;
+          const int off = 30 - nd;
+          for (int i = 0; i < nd; i++) {
+            int sx = px0 + (int) ((i + off) * slot);
+            int hi = (int) ((base - top) * imp[i] / mx), hs = (int) ((base - top) * sol[i] / mx);
+            if (hi > 0) it.filled_rectangle(sx + 1, base - hi, 6, hi);
+            if (fS && hs > 1) it.rectangle(sx + 7, base - hs, 6, hs);
+            if ((nd - 1 - i) % 5 == 0)
+              it.printf(sx + 7, base + 4, id(f_tiny), TextAlign::TOP_CENTER, "%.0f", lbl[i]);
+          }
+          it.line(px0, base, px1, base);
+          it.filled_rectangle(330, 296, 8, 8);
+          it.print(342, 300, id(f_tiny), TextAlign::CENTER_LEFT, "import");
+          if (fS) {
+            it.rectangle(392, 296, 8, 8);
+            it.print(404, 300, id(f_tiny), TextAlign::CENTER_LEFT, "solar");
+          }
+        }
+      }
+
+      // ── AGENDA: calendar (next 7 days) + open tasks (sensor.panel_agenda) ──
+      if (view == 4) {
+        it.print(38, 236, id(f_head), TextAlign::TOP_LEFT, "AGENDA · NEXT 7 DAYS");
+        static const char *mo[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+        // events, left: grouped by day, finished ones from earlier today skipped
+        int yy = 260, shown = 0;
+        std::string last;
+        bool more = false;
+        each(id(ag_events).state, 5, [&](std::string *f, int k) -> bool {
+          if (k < 4 || f[0].size() < 10) return true;
+          const int dd = atoi(f[0].substr(8, 2).c_str()), mm = atoi(f[0].substr(5, 2).c_str());
+          const bool is_today = now.is_valid() && dd == now.day_of_month && mm == now.month;
+          if (is_today && f[2].size() >= 5 &&
+              atoi(f[2].substr(0, 2).c_str()) * 60 + atoi(f[2].substr(3, 2).c_str()) <= now.hour * 60 + now.minute) return true;
+          const bool nd = f[0] != last;
+          if (yy + (nd ? 18 : 0) + 22 > 446) { more = true; return false; }
+          if (nd) {
+            char dh[24];
+            if (is_today) snprintf(dh, sizeof(dh), "TODAY");
+            else snprintf(dh, sizeof(dh), "%d %s", dd, (mm >= 1 && mm <= 12) ? mo[mm - 1] : "?");
+            it.print(38, yy + 8, id(f_label), TextAlign::CENTER_LEFT, dh);
+            for (int x = 38 + text_w(id(f_label), dh) + 6; x < 300; x += 3) it.draw_pixel_at(x, yy + 8, COLOR_ON);
+            yy += 18;
+            last = f[0];
+          }
+          it.print(38, yy + 10, id(f_head), TextAlign::CENTER_LEFT, f[1].empty() ? "all day" : f[1].c_str());
+          it.print(96, yy + 10, id(f_mid), TextAlign::CENTER_LEFT, ellipsize(id(f_mid), f[3], 300 - 96).c_str());
+          yy += 22;
+          shown++;
+          return true;
+        });
+        if (shown == 0) {
+          const std::string &src = id(ag_events).state;
+          it.print(38, 272, id(f_mid), src.empty() || src == "unknown" ? (offline_msg() ? offline_msg() : "No calendar data yet") : "Nothing planned this week");
+        } else if (more) {
+          it.print(38, 452, id(f_tiny), TextAlign::CENTER_LEFT, "more on the reTerminal");
+        }
+        // tasks, right
+        it.line(312, 252, 312, 444);
+        int n = 0;
+        each(id(ag_tasks).state, 3, [&](std::string *f, int k) -> bool { if (k >= 2) n++; return true; });
+        if (n == 0) it.print(324, 260, id(f_head), TextAlign::CENTER_LEFT, "TASKS · ALL DONE");
+        else        it.printf(324, 260, id(f_head), TextAlign::CENTER_LEFT, "TASKS · %d OPEN", n);
+        int row = 0;
+        each(id(ag_tasks).state, 3, [&](std::string *f, int k) -> bool {
+          if (k < 2) return true;
+          if (row >= 7) return false;
+          const int ry = 290 + row * 24;
+          it.print(332, ry, id(f_icon_xs), TextAlign::CENTER, "\U000F0130");
+          it.print(346, ry, id(f_mid), TextAlign::CENTER_LEFT, ellipsize(id(f_mid), f[1], 480 - 346).c_str());
+          row++;
+          return true;
+        });
+      }
+
+      // ── WATER: last 30 days (litres) ──
+      if (view == 5) {
+        float wl[30] = {}, lbl[30] = {};
+        const int nd = parse_list(id(wh_d).state, wl, 30);
+        const int nlb = parse_list(id(wh_dlbl).state, lbl, 30);
+        if (nlb < nd && now.is_valid())                  // no day labels from HA: count back from today
+          for (int i = 0; i < nd; i++) lbl[i] = ESPTime::from_epoch_local(now.timestamp - (nd - 1 - i) * 86400).day_of_month;
+        it.print(38, 234, id(f_label), "WATER · LAST 30 DAYS");
+        if (nd == 0) {
+          it.print(259, 346, id(f_small), TextAlign::CENTER, offline_msg() ? offline_msg() : "No water history yet");
+        } else {
+          float sum = 0, mx = 1.0f;
+          for (int i = 0; i < nd; i++) { sum += wl[i]; mx = std::max(mx, wl[i]); }
+          it.printf(480, 234, id(f_label), TextAlign::TOP_RIGHT, "£%.2f", sum * wprice + nd * wstanding);
+          char v[16];
+          auto stat = [&](int k, const char *l, const char *val) {
+            int x = 38 + k * 150;
+            it.print(x, 254, id(f_tiny), l);
+            it.print(x, 268, id(f_cond), val);
+          };
+          snprintf(v, sizeof(v), "%.0f L", sum);      stat(0, "USED", v);
+          snprintf(v, sizeof(v), "%.0f L", sum / nd); stat(1, "DAILY AVG", v);
+          snprintf(v, sizeof(v), "%.0f L", mx);       stat(2, "MOST IN A DAY", v);
+          const int px0 = 40, px1 = 478, top = 306, base = 432;
+          const float sl = (px1 - px0) / 30.0f;
+          const int off = 30 - nd;
+          for (int i = 0; i < nd; i++) {
+            const int sx = px0 + (int) ((i + off) * sl);
+            const int hb = (int) ((base - top) * wl[i] / mx);
+            if (hb > 0) it.filled_rectangle(sx + 2, base - hb, (int) sl - 4, hb);
+            if ((nd - 1 - i) % 5 == 0)
+              it.printf(sx + (int) sl / 2, base + 4, id(f_tiny), TextAlign::TOP_CENTER, "%.0f", lbl[i]);
+          }
+          it.line(px0, base, px1, base);
+        }
+      }
+
+      // ───────── RIGHT COLUMN without energy and water: tasks or plants ─────────
+      // (plants when the agenda is already in the top row, i.e. heating is off)
+      if (!util) {
+        card(506, 114, 270, 348, false);
+        if (fA && (fH || !plants_on)) {
+          int n = 0;
+          each(id(ag_tasks).state, 3, [&](std::string *f, int k) -> bool { if (k >= 2) n++; return true; });
+          it.print(520, 126, id(f_label), n ? "TASKS" : "TASKS · ALL DONE");
+          if (n) it.printf(762, 126, id(f_label), TextAlign::TOP_RIGHT, "%d OPEN", n);
+          int row = 0;
+          each(id(ag_tasks).state, 3, [&](std::string *f, int k) -> bool {
+            if (k < 2) return true;
+            if (row >= 15) return false;
+            const int ry = 158 + row * 20;
+            it.print(526, ry, id(f_icon_xs), TextAlign::CENTER, "\U000F0130");
+            it.print(538, ry, id(f_small), TextAlign::CENTER_LEFT, ellipsize(id(f_small), f[1], 762 - 538).c_str());
+            row++;
+            return true;
+          });
+        } else if (plants_on) {
+          it.print(520, 126, id(f_label), "PLANTS");
+          const std::string &sum = id(plant_summary).state;
+          int row = 0;
+          size_t pos = 0;
+          while (row < 15 && pos < sum.size()) {
+            size_t end = sum.find(';', pos);
+            if (end == std::string::npos) end = sum.size();
+            const std::string item = sum.substr(pos, end - pos);
+            pos = end + 1;
+            std::string f[4];
+            if (split(item, f, 4) < 3) continue;
+            const int ry = 158 + row * 20;
+            it.print(520, ry, id(f_small), TextAlign::CENTER_LEFT, ellipsize(id(f_small), f[0], 170).c_str());
+            if (atof(f[1].c_str()) < 1.0f) it.print(762, ry, id(f_label), TextAlign::CENTER_RIGHT, "WATER");
+            else it.printf(762, ry, id(f_small), TextAlign::CENTER_RIGHT, "%.0f%%", atof(f[2].c_str()));
+            row++;
+          }
+        }
+      }
+
+      // ───────── 7 DAYS of one utility – power → water → heating, like the E1003 ─────────
+      if (util) {
+        const int x = 506, y = 222, w = 270, h = 240;
+        card(x, y, w, h, false);
+        static const char *U_NAME[3] = {"POWER", "WATER", "HEATING"};
+        static const char *U_ICON[3] = {"\U000F0241", "\U000F058C", "\U000F0238"};
+        it.filled_circle(x + 26, y + 24, 13);
+        it.print(x + 26, y + 24, id(f_icon), COLOR_OFF, TextAlign::CENTER, U_ICON[hu]);
+        it.print(x + 46, y + 24, id(f_label), TextAlign::CENTER_LEFT, U_NAME[hu]);
+        it.print(x + 46 + text_w(id(f_label), U_NAME[hu]) + 6, y + 24, id(f_tiny), TextAlign::CENTER_LEFT, "7 DAYS");
+        if (nu >= 2) {                                         // which one is showing
+          int dx = x + w - 16 - (nu - 1) * 12;
+          for (int k = 0; k < nu; k++, dx += 12) {
+            if (u_list[k] == hu) it.filled_circle(dx, y + 24, 4);
+            else                 it.circle(dx, y + 24, 4);
+          }
+        }
+        float vals[7] = {}, costs[7];
+        if (hu == 2) {
+          sensor::Sensor *hd[7] = {id(ht_6), id(ht_5), id(ht_4), id(ht_3), id(ht_2), id(ht_1), id(ht_today)};
+          for (int i = 0; i < 7; i++) { vals[i] = nz(hd[i]->state); costs[i] = vals[i] * nz(id(heat_cost_h).state); }
+        } else {
+          last7(hu == 1, vals);
+          for (int i = 0; i < 7; i++) costs[i] = hu == 1 ? vals[i] * wprice + wstanding : vals[i] * price + standing;
+        }
+        float maxv = 0.001f, sa = 0, sg = 0;
+        for (int i = 0; i < 7; i++) { maxv = std::max(maxv, vals[i]); sa += vals[i]; sg += costs[i]; }
+        it.printf(x + 14, y + 56, id(f_cond), TextAlign::CENTER_LEFT, "£%.2f", sg);
+        char am[24];
+        if (hu == 0)      snprintf(am, sizeof(am), "%.1f kWh", sa);
+        else if (hu == 1) snprintf(am, sizeof(am), "%.0f L", sa);
+        else {
+          const int m = (int) roundf(sa * 60.0f);
+          snprintf(am, sizeof(am), "%dh %02dm", m / 60, m % 60);
+        }
+        it.print(x + w - 14, y + 56, id(f_small), TextAlign::CENTER_RIGHT, am);
+
+        const char *days = "MTWTFSS";
+        const int today = now.is_valid() ? (now.day_of_week + 5) % 7 : -1;   // 0 = Monday
+        const int base = 428, bmax = 118, bw = 24, step = 36, bx0 = 520;
+        for (int i = 0; i < 7; i++) {
+          const bool is_today = i == 6;
+          const int bx = bx0 + i * step, cx = bx + bw / 2;
+          const int bh = std::max(4, (int) (vals[i] / maxv * bmax));
+          const int by = base - bh;
+          if (is_today) {
+            rbox(bx, by, bw, bh, std::min(4, bh / 2), COLOR_ON);
+          } else {
+            rbox(bx, by, bw, bh, std::min(4, bh / 2), COLOR_ON);
+            if (bh > 4) rbox(bx + 2, by + 2, bw - 4, bh - 4, std::min(3, (bh - 4) / 2), COLOR_OFF);
+            for (int yy = by + 4; yy < base - 1; yy += 3) it.line(bx + 2, yy, bx + bw - 3, yy);
+          }
+          it.printf(cx, by - 4, id(f_tiny), TextAlign::BOTTOM_CENTER, costs[i] >= 10 ? "£%.1f" : "£%.2f", costs[i]);
+          const int wd = today >= 0 ? (today - 6 + i + 7) % 7 : i;   // weekday of that bar
+          char d[2] = {days[wd], 0};
+          if (is_today) {
+            it.filled_circle(cx, base + 18, 11);
+            it.print(cx, base + 18, id(f_label), COLOR_OFF, TextAlign::CENTER, d);
+          } else {
+            it.print(cx, base + 18, id(f_label), TextAlign::CENTER, d);
+          }
+        }
+        it.line(bx0 - 4, base, bx0 + 6 * step + bw + 4, base);
+      }
+
+
+      // ───────── FOOTNOTE: when this was drawn (refresh / sleep set in Home Assistant) ─────────
+      if (now.is_valid()) {
+        char fn[96];
+        if (sleepy)
+          snprintf(fn, sizeof(fn), "Updated %s · next %s · sleeps in between", upd_s, next_s);
+        else if (refresh_min > 1 && !id(diy_awake).state)
+          snprintf(fn, sizeof(fn), "Updated %s · sleep starts soon", upd_s);
+        else
+          snprintf(fn, sizeof(fn), "Updated %s%s", upd_s, id(diy_awake).state ? " · staying awake" : "");
+        if (sleepy) {
+          const int fw = text_w(id(f_small), fn);
+          it.print(776 - fw - 12, 471, id(f_icon_xs), TextAlign::CENTER, "\U000F04B2");
+        }
+        it.print(776, 471, id(f_small), TextAlign::CENTER_RIGHT, fn);
+      }
+
+      // ───────── TOP BAR: warnings left, device stats right ─────────
+      {
+        it.filled_rectangle(0, 0, 800, 24, COLOR_OFF);
+        for (int x = 0; x < 800; x += 2) it.draw_pixel_at(x, 24, COLOR_ON);
+        char buf[48];
+        int rx = 792;
+        auto statr = [&](const char *glyph, const char *txt) {
+          it.print(rx, 12, id(f_tiny), TextAlign::CENTER_RIGHT, txt);
+          rx -= text_w(id(f_tiny), txt) + 4;
+          it.print(rx, 12, id(f_icon_xs), TextAlign::CENTER_RIGHT, glyph);
+          rx -= 14 + 14;
+        };
+        float rssi = id(wifi_rssi).state;
+        if (std::isnan(rssi)) statr("\U000F092E", "--");
+        else {
+          snprintf(buf, sizeof(buf), "%.0f dBm", rssi);
+          statr(rssi > -55 ? "\U000F0928" : rssi > -65 ? "\U000F0925" : rssi > -75 ? "\U000F0922" : "\U000F091F", buf);
+        }
+        float bl = id(battery_level).state;
+        if (!std::isnan(bl)) {
+          static const char *BI[6] = {"\U000F007A", "\U000F007C", "\U000F007E", "\U000F0080", "\U000F0082", "\U000F0079"};
+          snprintf(buf, sizeof(buf), "%.0f%%", bl);
+          statr(bl < 10 ? "\U000F0083" : BI[std::min(5, (int) (bl / 20))], buf);
+        }
+        float ct = id(chip_temp).state;
+        if (std::isnan(ct)) statr("\U000F061A", "--");
+        else { snprintf(buf, sizeof(buf), "chip %.0f°C", ct); statr("\U000F061A", buf); }
+
+        const int right_limit = rx;
+
+        int lx = 6;
+        auto chip = [&](const char *glyph, const char *txt) -> bool {
+          int w = 22 + text_w(id(f_label), txt) + 10;
+          if (lx + w > right_limit - 8) return false;
+          rbox(lx, 3, w, 18, 9, COLOR_ON);
+          it.print(lx + 11, 12, id(f_icon_xs), COLOR_OFF, TextAlign::CENTER, glyph);
+          it.print(lx + 22, 12, id(f_label), COLOR_OFF, TextAlign::CENTER_LEFT, txt);
+          lx += w + 6;
+          return true;
+        };
+        bool any = false;
+        if (!id(ha_ok)) any |= chip("\U000F07D0", "Home Assistant offline");
+        float dry = id(plants_dry).state;
+        if (plants_on && !std::isnan(dry) && dry > 0) {   // plants on (above) and shown on the E1003
+          if (dry == 1) {
+            const std::string &sum = id(plant_summary).state;
+            std::string first = sum.substr(0, sum.find('|'));
+            snprintf(buf, sizeof(buf), "%s needs water", first.c_str());
+          } else {
+            snprintf(buf, sizeof(buf), "%.0f plants need water", dry);
+          }
+          any |= chip("\U000F1502", buf);
+        }
+        float off = id(rooms_off_n).state;
+        if ((fH || fP) && id(ha_ok) && !std::isnan(off) && off > 0) {
+          if (off == 1) snprintf(buf, sizeof(buf), "%s sensor offline", id(rooms_offline).state.c_str());
+          else          snprintf(buf, sizeof(buf), "%.0f room sensors offline", off);
+          any |= chip("\U000F1531", buf);
+        }
+        const std::string &ha_alert = id(heat_alert).state;
+        if (fH && !ha_alert.empty() && ha_alert != "unknown" && ha_alert != "unavailable")
+          any |= chip("\U000F0238", ha_alert.c_str());
+        if (!any) {
+          it.print(8, 12, id(f_icon_xs), TextAlign::CENTER_LEFT, "\U000F05E1");
+          it.print(26, 12, id(f_label), TextAlign::CENTER_LEFT, "All good");
+        }
+      }

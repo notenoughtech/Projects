@@ -111,3 +111,7 @@ utility_meter:
     name: "Solar Energy Monthly"
     source: *solar_energy
     cycle: monthly
+  solar_energy_today:                 # today's kWh, the same on every panel
+    name: "Solar Energy Today"
+    source: *solar_energy
+    cycle: daily

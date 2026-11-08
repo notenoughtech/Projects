@@ -1,0 +1,58 @@
+{#- ═════════════════════════════════════════════════════════════════════════
+    Bills: £ per day for the last 7 days (oldest first, today last), worked out
+    once here so every panel shows exactly the same figures.
+
+      bill_days('power')    kWh imported × price + daily standing charge
+      bill_days('water')    litres × price per litre + yearly standing charges ÷ 365
+      bill_days('heating')  boiler hours × cost per hour
+
+    Each returns "1.23,1.45,…" (7 values). A utility you don't have gives zeros –
+    the panels only add up the utilities they have switched on.
+    Today comes from the "today" sensors (they reset at midnight); the 6 days
+    before come from the history sensors the packages already keep.
+═════════════════════════════════════════════════════════════════════════ -#}
+
+{#- "1,2,3" or [1, 2, 3] → list of floats -#}
+{%- macro _nums(v) -%}
+  {%- set l = v if v is list else ((v or '') | string).replace('[', '').replace(']', '').split(',') -%}
+  {{- l | map('trim') | reject('eq', '') | map('float', 0) | list | tojson -}}
+{%- endmacro -%}
+
+{%- macro bill_days(u) -%}
+  {%- if u == 'power' -%}
+    {%- set d = _nums(state_attr('sensor.panel_energy_daily', 'last7_imp')) | from_json -%}
+    {%- set today = states('sensor.grid_import_today') | float(-1) -%}
+    {%- set price = states('input_number.energy_price') | float(0) -%}
+    {%- set fixed = states('input_number.energy_standing_charge') | float(0) -%}
+  {%- elif u == 'water' -%}
+    {%- set d = _nums(state_attr('sensor.panel_water_history', 'last7')) | from_json -%}
+    {%- set today = states('sensor.panel_water_today') | float(-1) -%}
+    {%- set price = (states('input_number.water_price') | float(0)) / 1000 -%}
+    {%- set fixed = ((states('input_number.water_standing_charge') | float(0))
+                   + (states('input_number.waste_water_standing_charge') | float(0))) / 365 -%}
+  {%- else -%}
+    {%- set d = ['sensor.heating_on_day_6', 'sensor.heating_on_day_5', 'sensor.heating_on_day_4',
+                 'sensor.heating_on_day_3', 'sensor.heating_on_day_2', 'sensor.heating_on_day_1']
+                | map('states') | map('float', 0) | list + [0] -%}   {#- + a slot for today -#}
+    {%- set today = states('sensor.heating_on_today') | float(-1) -%}
+    {%- set price = states('input_number.heating_cost_per_hour') | float(0) -%}
+    {%- set fixed = 0 -%}
+  {%- endif -%}
+  {#- the 6 days before today, then today (history's own "today" if the today sensor is missing) -#}
+  {%- set d7 = ([0, 0, 0, 0, 0, 0, 0] + d)[-7:] -%}
+  {%- set days = d7[:6] + [today if today >= 0 else d7[6]] -%}
+  {%- set ns = namespace(out=[]) -%}
+  {%- for v in days -%}
+    {%- set ns.out = ns.out + ['%.3f' | format(v * price + fixed)] -%}
+  {%- endfor -%}
+  {{- ns.out | join(',') -}}
+{%- endmacro -%}
+
+{#- today's total, all three utilities -#}
+{%- macro bill_today() -%}
+  {%- set ns = namespace(t=0) -%}
+  {%- for u in ['power', 'water', 'heating'] -%}
+    {%- set ns.t = ns.t + ((bill_days(u).split(',') | last) | float(0)) -%}
+  {%- endfor -%}
+  {{- '%.2f' | format(ns.t) -}}
+{%- endmacro -%}

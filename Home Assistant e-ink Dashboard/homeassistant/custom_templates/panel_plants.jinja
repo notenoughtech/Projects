@@ -71,3 +71,56 @@
   {%- endfor -%}
   {{- ns.out | join(';') -}}
 {%- endmacro -%}
+
+{#- ── Water left per plant (the reservoirs live in Home Assistant) ──────────
+    Each plant has a reservoir of "Plant Reservoir" glasses. It empties by
+    glass ÷ days-per-glass a day at 20 °C, twice as fast for every 10 °C warmer
+    (half for every 10 °C cooler), times "Plant Water Multiplier".
+    The temperature is the plant's room (or floor, or house) from panel_plants. -#}
+
+{#- the temperature plant n (1…15) gets, 5–35 °C (20 °C when nothing is known) -#}
+{%- macro plant_temp(n) -%}
+  {%- set rows = (state_attr('sensor.panel_plants', 'plants') or '') | string -%}
+  {%- set row = (rows.split(';') + [''] * 15)[n - 1] -%}
+  {%- set f = (row.split('|') + ['', '', '', '', ''])[:5] -%}
+  {%- set house = states('sensor.panel_floor_temperatures') | float(20) -%}
+  {%- set t = f[3] | float(house) if f[3] != '' else house -%}
+  {{- [35, [5, t] | max] | min -}}
+{%- endmacro -%}
+
+{#- ml a day plant n drinks right now -#}
+{%- macro plant_per_day(n) -%}
+  {%- set glass = states('input_number.plant_' ~ n ~ '_glass_ml') | float(250) -%}
+  {%- set days = states('input_number.plant_' ~ n ~ '_days') | float(7) -%}
+  {%- set days = days if days > 0 else 7 -%}
+  {%- set m = states('input_number.plant_water_multiplier') | float(1) -%}
+  {{- glass / days * (2 ** ((plant_temp(n) | float - 20) / 10)) * m -}}
+{%- endmacro -%}
+
+{#- every plant that's in use, as JSON:
+    [{"n": 1, "name": "Monstera", "room": "Living room", "left": 2.3, "pct": 45, "level": 270, "cap": 600}, …]
+    "left" = days of water left; plants named "-" are skipped (not in use) -#}
+{%- macro plant_status() -%}
+  {%- set res = states('input_number.plant_reservoir_glasses') | float(2) -%}
+  {%- set rooms = ((state_attr('sensor.panel_plants', 'plants') or '') | string).split(';') + [''] * 15 -%}
+  {%- set ns = namespace(out=[]) -%}
+  {%- for n in range(1, 16) -%}
+    {%- set nm = states('input_text.plant_' ~ n ~ '_name') -%}
+    {%- set nm = (nm if nm not in ['unknown', 'unavailable'] else '') | trim -%}
+    {#- empty name: the sample name (the same as the reTerminal's own) -#}
+    {%- set nm = nm or ['Monstera', 'Snake plant', 'Peace lily', 'Orchid', 'Cactus', 'Basil', 'Fiddle fig', 'Pothos',
+        'Aloe vera', 'Spider plant', 'Kentia palm', 'Jade plant', 'Chili pepper', 'Tulips', 'Calathea'][n - 1] -%}
+    {%- if nm != '-' -%}
+      {%- set glass = states('input_number.plant_' ~ n ~ '_glass_ml') | float(250) -%}
+      {%- set level = states('input_number.plant_' ~ n ~ '_level') | float(0) -%}
+      {%- set cap = glass * res -%}
+      {%- set pd = plant_per_day(n) | float(0) -%}
+      {%- set room = (rooms[n - 1].split('|') + ['', ''])[1] -%}
+      {%- set ns.out = ns.out + [{'n': n, 'name': nm, 'room': room,
+          'left': ((level / pd) if pd > 0 else 0) | round(1),
+          'pct': ([100, (level / cap * 100) if cap > 0 else 0] | min) | round(0),
+          'level': level | round(0), 'cap': cap | round(0)}] -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{- ns.out | tojson -}}
+{%- endmacro -%}

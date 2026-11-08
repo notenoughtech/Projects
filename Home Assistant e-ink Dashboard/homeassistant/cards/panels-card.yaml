@@ -1,12 +1,134 @@
-# DIY panel settings card for a Home Assistant dashboard
+# All the e-ink panels in one card: status from ESPHome + each panel's settings
 # Dashboard → ⋮ Edit → + Add card → Manual → paste all of this.
-type: entities
-title: DIY e-ink panel
-icon: mdi:tablet
-entities:
-  - entity: input_select.diy_panel_refresh
-    name: Refresh
-  - entity: input_select.diy_panel_card_change
-    name: Rotating card changes
-  - entity: input_boolean.diy_panel_stay_awake
-    name: Stay awake (for updates)
+# Delete the blocks for panels you don't have. A panel that sleeps between
+# refreshes shows "Unavailable" while asleep – that's normal; "last updated"
+# under Wi-Fi shows when it last checked in. Settings take effect on the next
+# wake (press the panel's button to wake it now). Night sleep: asleep between
+# the two times; a button press wakes a panel for 5 min, then it sleeps again.
+# Entity IDs come from each panel's friendly name in ESPHome – if you renamed a
+# panel, update them here.
+type: vertical-stack
+cards:
+  # ── reTerminal E1003 ──
+  - type: entities
+    title: reTerminal E1003
+    icon: mdi:tablet
+    show_header_toggle: false
+    entities:
+      - entity: sensor.reterminal_e1003_wifi_signal
+        name: Wi-Fi
+        secondary_info: last-updated
+      - entity: sensor.reterminal_e1003_battery_level
+        name: Battery
+      - entity: sensor.reterminal_e1003_room_temperature
+        name: Room
+      - entity: sensor.reterminal_e1003_uptime
+        name: Uptime
+      - type: section
+        label: "Refresh and night sleep: on the panel, Settings"
+  # ── reTerminal E1002 (colour) ──
+  - type: entities
+    title: reTerminal E1002 (colour)
+    icon: mdi:palette
+    show_header_toggle: false
+    entities:
+      - entity: sensor.reterminal_e1002_wifi_signal
+        name: Wi-Fi
+        secondary_info: last-updated
+      - entity: sensor.reterminal_e1002_battery_level
+        name: Battery
+      - entity: sensor.reterminal_e1002_room_temperature
+        name: Room
+      - type: section
+        label: Settings
+      - entity: input_select.e1002_panel_refresh
+        name: Refresh
+      - entity: input_select.e1002_panel_redraw
+        name: Redraw while awake
+      - entity: input_select.e1002_panel_card_change
+        name: Rotating card changes
+      - entity: input_boolean.e1002_panel_stay_awake
+        name: Stay awake (for updates)
+      - entity: input_boolean.e1002_panel_night_sleep
+        name: Night sleep
+      - entity: input_datetime.e1002_panel_night_from
+        name: Asleep from
+      - entity: input_datetime.e1002_panel_night_to
+        name: Wake up at
+  # ── reTerminal E1001 ──
+  - type: entities
+    title: reTerminal E1001
+    icon: mdi:tablet
+    show_header_toggle: false
+    entities:
+      - entity: sensor.reterminal_e1001_wifi_signal
+        name: Wi-Fi
+        secondary_info: last-updated
+      - entity: sensor.reterminal_e1001_battery_level
+        name: Battery
+      - entity: sensor.reterminal_e1001_room_temperature
+        name: Room
+      - type: section
+        label: Settings
+      - entity: input_select.e1001_panel_refresh
+        name: Refresh
+      - entity: input_select.e1001_panel_card_change
+        name: Rotating card changes
+      - entity: input_boolean.e1001_panel_stay_awake
+        name: Stay awake (for updates)
+      - entity: input_boolean.e1001_panel_night_sleep
+        name: Night sleep
+      - entity: input_datetime.e1001_panel_night_from
+        name: Asleep from
+      - entity: input_datetime.e1001_panel_night_to
+        name: Wake up at
+  # ── TRMNL (trmnl-og.yaml). TRMNL 7.5" DIY Kit (trmnl-7in5-diy.yaml): change trmnl_og_ to trmnl_diy_ ──
+  - type: entities
+    title: TRMNL
+    icon: mdi:tablet
+    show_header_toggle: false
+    entities:
+      - entity: sensor.trmnl_og_wifi_signal
+        name: Wi-Fi
+        secondary_info: last-updated
+      - entity: sensor.trmnl_og_battery_level
+        name: Battery
+      - type: section
+        label: Settings
+      - entity: input_select.trmnl_panel_refresh
+        name: Refresh
+      - entity: input_select.trmnl_panel_card_change
+        name: Rotating card changes
+      - entity: input_boolean.trmnl_panel_stay_awake
+        name: Stay awake (for updates)
+      - entity: input_boolean.trmnl_panel_night_sleep
+        name: Night sleep
+      - entity: input_datetime.trmnl_panel_night_from
+        name: Asleep from
+      - entity: input_datetime.trmnl_panel_night_to
+        name: Wake up at
+  # ── DIY panel (XIAO) ──
+  - type: entities
+    title: DIY panel (XIAO)
+    icon: mdi:tablet
+    show_header_toggle: false
+    entities:
+      - entity: sensor.reterminal_diy_wifi_signal
+        name: Wi-Fi
+        secondary_info: last-updated
+      - entity: sensor.reterminal_diy_chip_temperature
+        name: Chip
+      - type: section
+        label: Settings
+      - entity: input_select.diy_panel_refresh
+        name: Refresh
+      - entity: input_select.diy_panel_card_change
+        name: Rotating card changes
+      - entity: input_boolean.diy_panel_stay_awake
+        name: Stay awake (for updates)
+      - entity: input_boolean.diy_panel_night_sleep
+        name: Night sleep
+      - entity: input_datetime.diy_panel_night_from
+        name: Asleep from
+      - entity: input_datetime.diy_panel_night_to
+        name: Wake up at

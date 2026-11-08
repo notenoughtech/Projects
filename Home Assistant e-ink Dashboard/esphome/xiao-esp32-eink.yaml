@@ -9,6 +9,11 @@ esphome:
         - lambda: |-
             // woken by the sleep timer: draw once, sleep again (unless HA now says otherwise)
             id(wake_mode) = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER ? 1 : 0;
+            {
+              const auto cause = esp_sleep_get_wakeup_cause();
+              if (cause != ESP_SLEEP_WAKEUP_TIMER && cause != ESP_SLEEP_WAKEUP_UNDEFINED)
+                id(wake_hold_ms) = millis() + 300000;   // woken by a button: awake for 5 min
+            }
             id(draw_ok) = id(wake_mode) == 0;
             ESP_LOGI("sleep", "Boot: %s", id(wake_mode) ? "timer refresh" : "power on");
         - if:
@@ -29,6 +34,10 @@ esphome:
 # Settings → Entities if anything shows 0 on the screen.
 # ─────────────────────────────────────────────────────────────
 substitutions:
+  # Top row:
+  #   "wide"  – clock and weather now in one dark card (2/3), 3 h forecast on the right
+  #   "split" – clock card on the left half, a bordered weather card (now + 3 h) on the right
+  top_layout: "split"
   # ── What this panel shows: true / false ───────────────────────────────────
   # Match these to the packages you installed in Home Assistant
   # (packages/panel_<feature>.yaml). Change one → install again.
@@ -37,7 +46,7 @@ substitutions:
   show_water: "true"      # water today / this week, 30-day water view
   show_heating: "true"    # heating view, heating alert
   show_agenda: "true"     # calendar + tasks view
-  show_plants: "true"     # plants view (from the E1003), "needs water" alert
+  show_plants: "true"     # plants view, "needs water" alert
 
   grid_power: sensor.grid_power                     # W, + import / - export (flipped on device)
   grid_import_energy: sensor.grid_import_energy     # kWh lifetime total
@@ -46,12 +55,18 @@ substitutions:
   solar_energy: sensor.solar_energy                 # kWh lifetime total
   solar_forecast: sensor.power_production_now       # W, Forecast.Solar
   water_today: sensor.panel_water_today            # L today (packages/panel_water.yaml)
-  # Published by the reTerminal E1003 / configuration.yaml (rotating card + top bar)
-  plant_summary: sensor.reterminal_e1003_plant_summary
-  plants_dry: sensor.reterminal_e1003_plants_needing_water
+  # Today's kWh, reset at midnight by Home Assistant (packages/panel_energy.yaml and
+  # panel_solar.yaml) – the same numbers on every panel. Missing: the panel counts
+  # from its own midnight snapshot instead.
+  import_today: sensor.grid_import_today
+  export_today: sensor.grid_export_today
+  solar_today: sensor.solar_energy_today
+  # Worked out by Home Assistant (packages/panel_plants.yaml) – no E1003 needed
+  plants_dry: sensor.panel_plants_needing_water
   rooms_summary: sensor.panel_rooms               # rooms built from HA areas
   thermostat: climate.house_thermostat   # your Generic Thermostat helper (sensor: Heating Leading Temperature)
-  heat_alert: sensor.reterminal_e1003_heating_alert            # set on the E1003 Settings page
+  heat_alert: sensor.panel_heating_alert          # limits: prices card (packages/panel_core.yaml)
+  usage_alert: sensor.panel_usage_alert           # electricity / water over a limit, "" = fine
   heat_cost: input_number.heating_cost_per_hour                # £ per hour of boiler run time (HA helper)
   water_price: input_number.water_price              # £ per m³
   water_standing: input_number.water_standing_charge            # £ per year
@@ -64,6 +79,12 @@ substitutions:
   diy_refresh: input_select.diy_panel_refresh
   diy_cards: input_select.diy_panel_card_change
   diy_awake: input_boolean.diy_panel_stay_awake
+  #   night sleep: on = asleep between "from" and "to" (no refreshes); a button wakes
+  #                it for 5 min, then it sleeps again until the night is over
+  diy_night: input_boolean.diy_panel_night_sleep
+  diy_night_from: input_datetime.diy_panel_night_from
+  diy_night_to: input_datetime.diy_panel_night_to
+  wake_hint: ""                    # footnote while asleep, e.g. " · press green to wake"
 
 # Save restored values (today baselines, weekly water) at most every 10 min
 # to spare the flash.
@@ -219,6 +240,8 @@ font:
       "\U000F0438", # radiator
       "\U000F0AD8", # radiator-off
       "\U000F00ED", # calendar
+      "\U000F0241", # flash (power alert)
+      "\U000F058C", # water (water alert)
       "\U000F0130", # checkbox-blank-circle-outline
     ]
 
@@ -246,6 +269,22 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  - id: wake_hold_ms               # awake until (millis) after a button press – 5 min
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: night_now                  # inside the night sleep hours (Home Assistant helpers)
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: night_left_s               # seconds until the night sleep ends
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: card_off                   # rotating card moved on / back with the buttons
+    type: int
+    restore_value: false
+    initial_value: "0"
   - id: grid_avg                   # 1-minute rolling averages (W) for the solar + grid card
     type: float
     restore_value: false
@@ -291,6 +330,14 @@ text_sensor:
   - platform: homeassistant              # how often the rotating card changes
     entity_id: ${diy_cards}
     id: diy_cards
+    internal: true
+  - platform: homeassistant              # night sleep from (HH:MM:SS)
+    entity_id: ${diy_night_from}
+    id: night_from_t
+    internal: true
+  - platform: homeassistant              # night sleep until (HH:MM:SS)
+    entity_id: ${diy_night_to}
+    id: night_to_t
     internal: true
   - platform: homeassistant
     entity_id: weather.forecast_home
@@ -343,14 +390,20 @@ text_sensor:
     attribute: tasks
     id: ag_tasks
     internal: true
-  # Heating over its daily / weekly limit (published by the E1003, "" = fine)
+  # Heating over its day / week / month limit ("" = fine, Home Assistant works it out)
   - platform: homeassistant
     entity_id: ${heat_alert}
     id: heat_alert
     internal: true
-  # Plants (published by the E1003)
+  # Electricity or water over a day / week / month limit ("" = fine)
   - platform: homeassistant
-    entity_id: ${plant_summary}
+    entity_id: ${usage_alert}
+    id: usage_alert
+    internal: true
+  # Plants: the 5 thirstiest, "name|days left|percent|room;…" (Home Assistant)
+  - platform: homeassistant
+    entity_id: ${plants_dry}
+    attribute: summary
     id: plant_summary
     internal: true
   # Heating
@@ -394,6 +447,23 @@ text_sensor:
     attribute: last7_imp
     id: en_last7_imp
     internal: true
+  # Bills worked out once in Home Assistant (packages/panel_core.yaml → Panel Bills):
+  # £ per day, last 7 days, today last – so every panel shows the same figures
+  - platform: homeassistant
+    entity_id: sensor.panel_bills
+    attribute: power
+    id: bill_p
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_bills
+    attribute: water
+    id: bill_w
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.panel_bills
+    attribute: heating
+    id: bill_h
+    internal: true
   - platform: homeassistant
     entity_id: sensor.panel_energy_daily
     attribute: sol
@@ -425,6 +495,11 @@ text_sensor:
     entity_id: sensor.panel_power_12h
     attribute: forecast
     id: hist_forecast
+    internal: true
+  - platform: homeassistant                # solar forecast, the next 4 h (8 × 30 min)
+    entity_id: sensor.panel_solar_forecast
+    attribute: future
+    id: sf_future
     internal: true
 
 time:
@@ -566,6 +641,18 @@ sensor:
 
   # Energy totals. A baseline is set the first time a value arrives,
   # and reset to 0 if the sensor itself rolls over.
+  - platform: homeassistant              # today's kWh from Home Assistant (see substitutions)
+    entity_id: ${import_today}
+    id: ha_imp_today
+    internal: true
+  - platform: homeassistant
+    entity_id: ${export_today}
+    id: ha_exp_today
+    internal: true
+  - platform: homeassistant
+    entity_id: ${solar_today}
+    id: ha_sol_today
+    internal: true
   - platform: homeassistant
     entity_id: ${grid_import_energy}
     id: myGridImport
@@ -664,6 +751,10 @@ binary_sensor:
     entity_id: ${diy_awake}
     id: diy_awake
     internal: true
+  - platform: homeassistant              # night sleep on / off
+    entity_id: ${diy_night}
+    id: night_on
+    internal: true
 
 # ─────────────────────────────────────────────────────────────
 # Display – Waveshare 7.5" V2 (800×480)
@@ -675,6 +766,37 @@ deep_sleep:
   id: deep_sleep_ctl
 
 script:
+  # Night sleep: inside the hours set in Home Assistant? (and how long until they end)
+  - id: night_check
+    then:
+      - lambda: |-
+          id(night_now) = false;
+          id(night_left_s) = 0;
+          auto t = id(ha_time).now();
+          const std::string &a = id(night_from_t).state, &b = id(night_to_t).state;
+          if (!id(night_on).state || !t.is_valid() || a.size() < 5 || b.size() < 5) return;
+          const int fa = atoi(a.substr(0, 2).c_str()) * 60 + atoi(a.substr(3, 2).c_str());
+          const int fb = atoi(b.substr(0, 2).c_str()) * 60 + atoi(b.substr(3, 2).c_str());
+          if (fa == fb) return;
+          const int m = t.hour * 60 + t.minute;
+          if (fa < fb ? (m < fa || m >= fb) : (m < fa && m >= fb)) return;
+          id(night_now) = true;
+          const int secs = t.hour * 3600 + t.minute * 60 + t.second;
+          id(night_left_s) = ((fb * 60 - secs) % 86400 + 86400) % 86400;
+  # Buttons: move the rotating card on (+1) / back (-1), or just redraw (0). Presses
+  # within 1.5 s add up into one redraw. Any press keeps the panel awake for 5 min.
+  - id: card_step
+    mode: restart
+    parameters:
+      step: int
+    then:
+      - lambda: |-
+          id(card_off) += step;
+          id(wake_hold_ms) = millis() + 300000;
+          if (id(wake_mode) == 1) id(wake_mode) = 0;
+          id(going_sleep) = false;
+      - delay: 1500ms
+      - component.update: epaper_display
   # A new day that began while the panel slept: start today's kWh from now
   # (the panel wakes on the 5 / 10 / 15 … min marks, so there's a wake at midnight)
   - id: day_check
@@ -693,6 +815,13 @@ script:
   - id: enter_sleep
     then:
       - lambda: |-
+          id(night_check).execute();
+          if (id(night_now) && id(night_left_s) > 0) {
+            ESP_LOGI("sleep", "Night sleep for %d s", id(night_left_s) + 10);
+            id(deep_sleep_ctl).set_sleep_duration((uint32_t) (id(night_left_s) + 10) * 1000u);
+            id(deep_sleep_ctl).begin_sleep(true);
+            return;
+          }
           const std::string &r = id(diy_refresh).state;
           int iv = 0;
           for (char c : r) { if (c >= '0' && c <= '9') iv = iv * 10 + (c - '0'); else if (iv) break; }
@@ -734,6 +863,7 @@ script:
             id(wake_mode) = 0;
           }
           id(draw_ok) = true;
+          id(night_check).execute();
       - component.update: epaper_display
       - delay: 8s                          # let the panel finish its refresh
       - if:
@@ -772,8 +902,12 @@ interval:
                 const std::string &r = id(diy_refresh).state;
                 const bool known = !r.empty() && r != "unknown" && r != "unavailable";
                 const bool always = r.find("minute") != std::string::npos && r.find("min ") == std::string::npos;
-                if (known && !always && !id(diy_awake).state && id(ha_ok) && millis() > 90000) {
-                  ESP_LOGI("sleep", "Sleep is on in Home Assistant – going to sleep");
+                id(night_check).execute();
+                const bool hold = (int32_t) (id(wake_hold_ms) - millis()) > 0;   // button: 5 min awake
+                const bool timed = known && !always && millis() > 90000;
+                const bool night = id(night_now) && millis() > 60000;
+                if ((timed || night) && !hold && !id(diy_awake).state && id(ha_ok)) {
+                  ESP_LOGI("sleep", "%s – going to sleep", night ? "Night sleep" : "Sleep is on in Home Assistant");
                   id(going_sleep) = true;
                 }
             - component.update: epaper_display
@@ -851,6 +985,12 @@ display:
       const int refresh_min = minutes_of(id(diy_refresh).state, 1);
       const int card_min = std::max(1, minutes_of(id(diy_cards).state, 5));
       const bool sleepy = id(wake_mode) == 1 || id(going_sleep);
+      const bool night_frame = sleepy && id(night_now);    // the last frame before night sleep
+      char nto_s[8] = "--:--";                              // the night ends at …
+      {
+        const std::string &e = id(night_to_t).state;
+        if (e.size() >= 5) snprintf(nto_s, sizeof(nto_s), "%.5s", e.c_str());
+      }
       char upd_s[8] = "--:--", next_s[8] = "--:--", sdate_s[20] = "";
       if (now.is_valid()) {
         const int secs = now.hour * 3600 + now.minute * 60 + now.second;
@@ -865,9 +1005,9 @@ display:
       float price    = nz(id(energy_price).state);
       float standing = nz(id(energy_standing_charge).state);
 
-      float import_today = today_of(id(myGridImport).state, id(base_import));
-      float export_today = today_of(id(myGridExport).state, id(base_export));
-      float solar_today  = today_of(id(mySolarTotal).state, id(base_solar));
+      float import_today = !std::isnan(id(ha_imp_today).state) ? id(ha_imp_today).state : today_of(id(myGridImport).state, id(base_import));
+      float export_today = !std::isnan(id(ha_exp_today).state) ? id(ha_exp_today).state : today_of(id(myGridExport).state, id(base_export));
+      float solar_today  = !std::isnan(id(ha_sol_today).state) ? id(ha_sol_today).state : today_of(id(mySolarTotal).state, id(base_solar));
       float water_today  = nz(id(myWaterToday).state);
       float wprice       = nz(id(water_price).state) / 1000.0f;   // £ per litre
       float wstanding    = (nz(id(water_standing_charge).state) +
@@ -956,8 +1096,10 @@ display:
         }
       };
 
-      // ───────── CLOCK + DATE ─────────
-      card(24, 30, 368, 76, true);
+      // ───────── TOP ROW: top_layout "wide" or "split" (substitutions) ─────────
+      const bool split_top = strcmp("${top_layout}", "split") == 0;
+      // clock + date (+ weather now when "wide"): one dark card
+      card(24, 30, split_top ? 368 : 470, 76, true);
       int dx = 38;
       if (now.is_valid()) {
         char hm[8];
@@ -974,23 +1116,41 @@ display:
           dy_s = "Updated";
           dt_s = dt2;
         }
-        const int dw = 382 - dx - 20;
+        if (night_frame) {                              // night sleep: when it's back
+          snprintf(dt2, sizeof(dt2), "%s · back at %s", sdate_s, nto_s);
+          dy_s = "Night sleep";
+          dt_s = dt2;
+        }
+        const int dw = (split_top ? 382 : 354) - dx - 20;   // room left for the day / date
         it.print(dx + 20, 56, text_w(id(f_cond), dy_s) <= dw ? id(f_cond) : id(f_small), COLOR_OFF, TextAlign::CENTER_LEFT, dy_s);
         it.print(dx + 20, 82, text_w(id(f_small), dt_s) <= dw ? id(f_small) : id(f_tiny), COLOR_OFF, TextAlign::CENTER_LEFT, dt_s);
       }
 
-      // ───────── WEATHER: now + next 24 h in 3 h steps ─────────
-      {                                              // right half, no border: x 404–776
+      // weather now: icon · temperature · condition · pressure –
+      // "wide": inside the clock card · "split": left of the bordered weather card
+      if (split_top) card(404, 30, 372, 76, false);
+      {
+        const int wx0 = split_top ? 404 : 362;
+        const Color wfg = split_top ? COLOR_ON : COLOR_OFF;
         const char *label;
         const char *icon = wx(id(myWeather).state, &label);
-        it.print(424, 68, id(f_wx_icon), TextAlign::CENTER, icon);
-        if (std::isnan(id(myTemperature).state)) it.print(448, 56, id(f_temp), TextAlign::CENTER_LEFT, "--");
-        else it.printf(448, 56, id(f_temp), TextAlign::CENTER_LEFT, "%.0f°", id(myTemperature).state);
-        it.print(450, 84, id(f_tiny), TextAlign::CENTER_LEFT, label);
+        if (!split_top) it.line(wx0, 44, wx0, 92, wfg);
+        it.print(wx0 + 26, 68, id(f_wx_icon), wfg, TextAlign::CENTER, icon);
+        if (std::isnan(id(myTemperature).state)) it.print(wx0 + 50, 54, id(f_temp), wfg, TextAlign::CENTER_LEFT, "--");
+        else it.printf(wx0 + 50, 54, id(f_temp), wfg, TextAlign::CENTER_LEFT, "%.0f°", id(myTemperature).state);
+        const int lw0 = (split_top ? 531 : 484) - (wx0 + 52);
+        it.print(wx0 + 52, 82, id(f_tiny), wfg, TextAlign::CENTER_LEFT, ellipsize(id(f_tiny), label, lw0).c_str());
         if (!std::isnan(id(myPressure).state))
-          it.printf(450, 97, id(f_tiny), TextAlign::CENTER_LEFT, "%.0f hPa", id(myPressure).state);
+          it.printf(wx0 + 52, 95, id(f_tiny), wfg, TextAlign::CENTER_LEFT, "%.0f hPa", id(myPressure).state);
+      }
+
+      // ───────── WEATHER: next 24 h in 3 h steps ─────────
+      // "wide": right third, lined up with the cards below · "split": inside the weather card
+      {
         const std::string &src = id(wx_slots).state;
-        const int sx0 = 534, sw = 30;
+        const int sx0 = split_top ? 535 : 518, sw = split_top ? 29 : 32;
+        const int yo = split_top ? -4 : 0;                 // a little higher, inside the card
+        const int ys = split_top ? 95 : 103;               // solar strip (5 px)
         size_t pos = 0;
         int n = 0;
         while (n < 8 && pos < src.size()) {
@@ -1005,7 +1165,7 @@ display:
           if (fS && k >= 6) {
             const int light = atoi(f[4].c_str()), day = atoi(f[5].c_str());
             const int score = light * day / 100;
-            for (int yy = 103; yy < 108; yy++)
+            for (int yy = ys; yy < ys + 5; yy++)
               for (int xx = x + 1; xx < x + sw; xx++) {
                 bool on;
                 if (day <= 0) on = true;                         // night
@@ -1015,14 +1175,14 @@ display:
                 if (on) it.draw_pixel_at(xx, yy, COLOR_ON);
               }
           }
-          for (int yy = 38; yy < 100; yy += 3) it.draw_pixel_at(x, yy, COLOR_ON);
-          it.print(cx, 42, id(f_tiny), TextAlign::CENTER, f[0].c_str());
-          it.print(cx, 64, id(f_wx_sm), TextAlign::CENTER, wx(f[1], nullptr));
-          it.printf(cx, 89, id(f_label), TextAlign::CENTER, "%.0f°", atof(f[2].c_str()));
+          for (int yy = 38 + yo; yy < ys - 3; yy += 3) it.draw_pixel_at(x, yy, COLOR_ON);
+          it.print(cx, 42 + yo, id(f_tiny), TextAlign::CENTER, f[0].c_str());
+          it.print(cx, 64 + yo, id(f_wx_sm), TextAlign::CENTER, wx(f[1], nullptr));
+          it.printf(cx, 88 + yo - (split_top ? 1 : 0), id(f_label), TextAlign::CENTER, "%.0f°", atof(f[2].c_str()));
           n++;
         }
-        if (n == 0) it.print(652, 68, id(f_tiny), TextAlign::CENTER, offline_msg() ? offline_msg() : "no 3 h forecast yet");
-        else if (fS) it.rectangle(sx0, 102, n * sw + 1, 7);   // frame of the solar strip
+        if (n == 0) it.print(split_top ? 648 : 646, 68, id(f_tiny), TextAlign::CENTER, offline_msg() ? offline_msg() : "no 3 h forecast yet");
+        else if (fS) it.rectangle(sx0, ys - 1, n * sw + 1, 7);   // frame of the solar strip
       }
 
       auto parse_list = [](const std::string &str, float *out, int n) -> int {
@@ -1042,6 +1202,14 @@ display:
 
       // the last 7 days, oldest first, today last: HA statistics, else the 30-day history
       // matched by date; today live from this device
+      // Bills from Home Assistant (sensor.panel_bills): 7 × £, today last. false = not there
+      auto ha_bill = [&](int u, float *o) -> bool {
+        const std::string &bs = u == 0 ? id(bill_p).state : u == 1 ? id(bill_w).state : id(bill_h).state;
+        float t[7] = {};
+        if (parse_list(bs, t, 7) < 7) return false;
+        for (int i = 0; i < 7; i++) o[i] = t[i];
+        return true;
+      };
       auto last7 = [&](bool wat, float *vals) {
         for (int i = 0; i < 7; i++) vals[i] = 0;
         parse_list(wat ? id(wh_last7).state : id(en_last7_imp).state, vals, 7);
@@ -1170,9 +1338,9 @@ display:
           const int x = 506, w = 270;
           card(x, y, w, h, false);
           float g3[3][7] = {};
-          if (fE) { float v[7]; last7(false, v); for (int i = 0; i < 7; i++) g3[0][i] = v[i] * price + standing; }
-          if (fW) { float v[7]; last7(true, v);  for (int i = 0; i < 7; i++) g3[1][i] = v[i] * wprice + wstanding; }
-          if (fH) {
+          if (fE && !ha_bill(0, g3[0])) { float v[7]; last7(false, v); for (int i = 0; i < 7; i++) g3[0][i] = v[i] * price + standing; }
+          if (fW && !ha_bill(1, g3[1])) { float v[7]; last7(true, v);  for (int i = 0; i < 7; i++) g3[1][i] = v[i] * wprice + wstanding; }
+          if (fH && !ha_bill(2, g3[2])) {
             sensor::Sensor *hd[7] = {id(ht_6), id(ht_5), id(ht_4), id(ht_3), id(ht_2), id(ht_1), id(ht_today)};
             for (int i = 0; i < 7; i++) g3[2][i] = nz(hd[i]->state) * nz(id(heat_cost_h).state);
           }
@@ -1211,8 +1379,8 @@ display:
       // views: 0 12 h chart · 1 plants · 2 heating · 3 energy 30 days · 5 water 30 days ·
       //        6 bills 7 days · 4 agenda. The next one every "card change" minutes (Home
       //        Assistant helper); asleep, the next one on every wake.
-      // only the features switched on above; plants also skipped when hidden on the E1003
-      const bool plants_on = fP && id(plant_summary).state != "off";
+      // only the features switched on above
+      const bool plants_on = fP;
       const int nbills = (fE ? 1 : 0) + (fW ? 1 : 0) + (fH ? 1 : 0);
       int views[7], nviews = 0;
       if (fE) views[nviews++] = 0;
@@ -1223,7 +1391,7 @@ display:
       if (fW) views[nviews++] = 5;
       if (fA) views[nviews++] = 4;
       const int per_card = sleepy ? std::max(card_min, std::max(5, refresh_min)) : card_min;
-      const int slot = (now.is_valid() && nviews) ? ((now.hour * 60 + now.minute) / per_card) % nviews : 0;
+      const int slot = nviews ? (((now.is_valid() ? (now.hour * 60 + now.minute) / per_card : 0) + id(card_off)) % nviews + nviews) % nviews : 0;
       const int view = nviews ? views[slot] : -1;
       card(24, 222, 470, 240, false);
       if (view < 0) it.print(259, 346, id(f_small), TextAlign::CENTER, "Nothing switched on - see show_* at the top of the YAML");
@@ -1238,9 +1406,9 @@ display:
       // ── BILLS · 7 DAYS: power + water + heating per day, stacked; total on top ──
       if (view == 6) {
         float g[3][7] = {};                                    // £ per day: power, water, heating
-        if (fE) { float v[7]; last7(false, v); for (int i = 0; i < 7; i++) g[0][i] = v[i] * price + standing; }
-        if (fW) { float v[7]; last7(true, v);  for (int i = 0; i < 7; i++) g[1][i] = v[i] * wprice + wstanding; }
-        if (fH) {
+        if (fE && !ha_bill(0, g[0])) { float v[7]; last7(false, v); for (int i = 0; i < 7; i++) g[0][i] = v[i] * price + standing; }
+        if (fW && !ha_bill(1, g[1])) { float v[7]; last7(true, v);  for (int i = 0; i < 7; i++) g[1][i] = v[i] * wprice + wstanding; }
+        if (fH && !ha_bill(2, g[2])) {
           sensor::Sensor *hd[7] = {id(ht_6), id(ht_5), id(ht_4), id(ht_3), id(ht_2), id(ht_1), id(ht_today)};
           const float hc = nz(id(heat_cost_h).state);
           for (int i = 0; i < 7; i++) g[2][i] = nz(hd[i]->state) * hc;
@@ -1295,111 +1463,125 @@ display:
         it.line(bx0 - 6, base, bx0 + 6 * step + bw + 6, base);
       }
 
+      // ── POWER · 24 HOURS: the last 20 h, now, and the solar forecast 4 h ahead (as on the E1003) ──
       if (view == 0) {
-        it.print(38, 234, id(f_label), "LAST 12 HOURS");
-
-        int lx = 280, ly = 241;
-        for (int i = 0; i < 3; i++) it.line(lx, ly - 1 + i, lx + 18, ly - 1 + i);
+        it.print(38, 234, id(f_label), fS ? "POWER · 24 HOURS" : "POWER · 20 HOURS");
+        // chart colours and line widths (the colour panel changes these)
+        const Color CH_GRID = COLOR_ON, CH_SOLAR = COLOR_ON, CH_FC = COLOR_ON;
+        const int TH_SOLAR = 2;
+        int lx = 250;
+        const int ly = 241;
+        it.filled_rectangle(lx, ly - 1, 18, 3, CH_GRID);
         it.print(lx + 22, ly, id(f_tiny), TextAlign::CENTER_LEFT, "Grid");
         lx += 62;
         if (fS) {
-          it.line(lx, ly, lx + 18, ly); it.line(lx, ly + 1, lx + 18, ly + 1);
+          it.filled_rectangle(lx, ly - 1, 18, TH_SOLAR, CH_SOLAR);
           it.print(lx + 22, ly, id(f_tiny), TextAlign::CENTER_LEFT, "Solar");
           lx += 66;
-          for (int s = 0; s < 18; s += 6) it.line(lx + s, ly, lx + s + 3, ly);
+          for (int q = 0; q < 18; q += 6) it.filled_rectangle(lx + q, ly - 1, 3, 2, CH_FC);
           it.print(lx + 22, ly, id(f_tiny), TextAlign::CENTER_LEFT, "Forecast");
         }
 
-        float top_kw = 4.0f;                     // axis top, set from the data below
-        {
-          // 12 h chart from Home Assistant history: 72 ten-minute averages + the live value
-          const int gx = 70, gy = 258, gw = 406, gh = 168, N = 72;
-          auto parse_hist = [](const std::string &str, float *out, int n) {
-            for (int i = 0; i < n; i++) out[i] = NAN;
-            const char *q = str.c_str();
-            if (*q == '[' || *q == '(') q++;                 // HA may send [1, 2, 3]
-            for (int i = 0; i < n; i++) {
-              if (*q != ',' && *q != 0) {
-                char *e;
-                float v = strtof(q, &e);
-                if (e == q) break;          // not a number list (e.g. "unknown")
-                out[i] = v;
-                q = e;
-              }
-              if (*q != ',') break;
-              q++;
+        const int gx = 70, gy = 258, gw = 406, gh = 168, N = 120;       // 20 h of 10-minute averages
+        const int xnow = fS ? gx + (int) roundf(gw * 20.0f / 24.0f) : gx + gw - 1;   // no solar: no forecast part
+        auto parse_hist = [](const std::string &str, float *out, int n) {
+          for (int i = 0; i < n; i++) out[i] = NAN;
+          const char *q = str.c_str();
+          if (*q == '[' || *q == '(') q++;                 // HA may send [1, 2, 3]
+          for (int i = 0; i < n; i++) {
+            if (*q != ',' && *q != 0) {
+              char *e;
+              float v = strtof(q, &e);
+              if (e == q) break;          // not a number list (e.g. "unknown")
+              out[i] = v;
+              q = e;
             }
-          };
-          // HA sends the last 20 h (120 values); this chart shows the last 12 h of them
-          float hg[N], hs[N], hf[N];
-          auto last12 = [&](const std::string &src, float *out) {
-            float all[120];
-            parse_hist(src, all, 120);
-            int cnt = 1;                         // list length (120 from HA; older 72-long lists work too)
-            for (char c : src) if (c == ',') cnt++;
-            const int len = std::min(120, cnt), start = std::max(0, len - N);
-            for (int i = 0; i < N; i++) out[i] = (start + i < len) ? all[start + i] : NAN;
-          };
-          last12(id(hist_grid).state, hg);
-          last12(id(hist_solar).state, hs);
-          last12(id(hist_forecast).state, hf);
-          if (!fS) for (int k = 0; k < N; k++) { hs[k] = NAN; hf[k] = NAN; }
-
-          // dotted grid: every 2 kW and every hour
-          for (int k = 0; k <= 4; k++) {
-            int yy = gy + k * (gh - 1) / 4;
-            for (int xx = gx; xx < gx + gw; xx += 2) it.draw_pixel_at(xx, yy, COLOR_ON);
+            if (*q != ',') break;
+            q++;
           }
-          for (int h = 0; h <= 12; h++) {
-            int xx = gx + h * (gw - 1) / 12;
-            for (int yy = gy; yy < gy + gh; yy += 2) it.draw_pixel_at(xx, yy, COLOR_ON);
-          }
+        };
+        float hg[N], hs[N], hf[N], fut[8];
+        parse_hist(id(hist_grid).state, hg, N);
+        parse_hist(id(hist_solar).state, hs, N);
+        parse_hist(id(hist_forecast).state, hf, N);
+        parse_hist(id(sf_future).state, fut, 8);
+        if (!fS) for (int k = 0; k < N; k++) { hs[k] = NAN; hf[k] = NAN; }
 
-          // axis: the biggest value in the chart + 15 %, rounded up (same above and below zero)
-          float peak = std::max(fabsf(nz(id(myGridConsumption).state)), fS ? fabsf(nz(id(mySolarProduction).state)) : 0.0f);
+        // dotted grid: 4 rows, a line every 2 h; the next 4 h lightly shaded
+        for (int k = 0; k <= 4; k++) {
+          const int yy = gy + k * (gh - 1) / 4;
+          for (int xx = gx; xx < gx + gw; xx += 2) it.draw_pixel_at(xx, yy, COLOR_ON);
+        }
+        const int hours = fS ? 24 : 20;
+        for (int h = 0; h <= hours; h += 2) {
+          const int xx = gx + h * (gw - 1) / hours;
+          for (int yy = gy; yy < gy + gh; yy += 2) it.draw_pixel_at(xx, yy, COLOR_ON);
+        }
+        if (fS)
+          for (int yy = gy; yy < gy + gh; yy += 4)
+            for (int xx = xnow + (yy / 4) % 2 * 3; xx < gx + gw; xx += 6) it.draw_pixel_at(xx, yy, COLOR_ON);
+
+        // axis: the biggest value in the chart + 15 %, rounded up (same above and below zero)
+        float peak = fabsf(nz(id(myGridConsumption).state));
+        for (int k = 0; k < N; k++) if (!std::isnan(hg[k])) peak = std::max(peak, fabsf(hg[k]));
+        if (fS) {
+          peak = std::max(peak, fabsf(nz(id(mySolarProduction).state)));
           for (int k = 0; k < N; k++) {
-            if (!std::isnan(hg[k])) peak = std::max(peak, fabsf(hg[k]));
             if (!std::isnan(hs[k])) peak = std::max(peak, fabsf(hs[k]));
             if (!std::isnan(hf[k])) peak = std::max(peak, fabsf(hf[k]));
           }
-          {
-            static const float st[] = {0.1f, 0.2f, 0.25f, 0.5f, 1, 2, 2.5f, 5, 10, 20, 25, 50};
-            const float v = std::max(0.2f, peak * 1.15f / 1000.0f);
-            top_kw = ceilf(v / 50.0f) * 50.0f;
-            for (float s : st) if (v <= s * 4) { top_kw = ceilf(v / s - 0.001f) * s; break; }
-          }
-          const float top_w = top_kw * 1000.0f;
-          auto ymap = [&](float w) {
-            w = std::max(-top_w, std::min(top_w, w));
-            return gy + (int) roundf((top_w - w) / (2 * top_w) * (gh - 1));
-          };
-          // sign: grid history is + import, the chart shows export above the line
-          auto trace = [&](const float *v, float live, float sign, int th, Color c, bool dashed) {
-            int px = 0, py = 0, seg = 0;
-            bool have = false;
-            for (int k = 0; k <= N; k++) {
-              float val = k < N ? v[k] : live;
-              if (std::isnan(val)) { have = false; continue; }
-              int x = k < N ? gx + (int) roundf((k + 0.5f) * gw / N) : gx + gw - 1;
-              int y = ymap(sign * val);
-              if (have && (!dashed || (seg % 2) == 0)) {
-                for (int dx = 0; dx < th; dx++)
-                  for (int dy = 0; dy < th; dy++)
-                    it.line(px + dx - th / 2, py + dy - th / 2, x + dx - th / 2, y + dy - th / 2, c);
-              }
-              if (have) seg++;
-              px = x; py = y; have = true;
-            }
-          };
-          // live value: myGridConsumption is already flipped to + export on the device
-          if (fS) {
-            trace(hf, id(mySolarPrediction).state, 1.0f, 1, COLOR_ON, true);
-            trace(hs, std::max(0.0f, id(mySolarProduction).state), 1.0f, 2, COLOR_ON, false);
-          }
-          trace(hg, -id(myGridConsumption).state, -1.0f, 3, COLOR_ON, false);
+          for (int k = 0; k < 8; k++) if (!std::isnan(fut[k])) peak = std::max(peak, fut[k]);
         }
-        const int gx = 70, gy = 258, gw = 406, gh = 168;
-        it.line(gx, gy + gh / 2, gx + gw, gy + gh / 2);
+        float top_kw;
+        {
+          static const float st[] = {0.1f, 0.2f, 0.25f, 0.5f, 1, 2, 2.5f, 5, 10, 20, 25, 50};
+          const float v = std::max(0.2f, peak * 1.15f / 1000.0f);
+          top_kw = ceilf(v / 50.0f) * 50.0f;
+          for (float st1 : st) if (v <= st1 * 4) { top_kw = ceilf(v / st1 - 0.001f) * st1; break; }
+        }
+        const float top_w = top_kw * 1000.0f;
+        auto ymap = [&](float w) {
+          w = std::max(-top_w, std::min(top_w, w));
+          return gy + (int) roundf((top_w - w) / (2 * top_w) * (gh - 1));
+        };
+        auto xpast = [&](int k) { return gx + (int) roundf((k + 0.5f) * (xnow - gx) / N); };
+        // sign: grid history is + import, the chart shows export above the line
+        auto trace = [&](const float *v, float live, float sign, int th, Color c, bool dashed) {
+          int px = 0, py = 0, seg = 0;
+          bool have = false;
+          for (int k = 0; k <= N; k++) {
+            float val = k < N ? v[k] : live;
+            if (std::isnan(val)) { have = false; continue; }
+            const int x = k < N ? xpast(k) : xnow;
+            const int y = ymap(sign * val);
+            if (have && (!dashed || (seg % 2) == 0)) {
+              for (int dx = 0; dx < th; dx++)
+                for (int dy = 0; dy < th; dy++)
+                  it.line(px + dx - th / 2, py + dy - th / 2, x + dx - th / 2, y + dy - th / 2, c);
+            }
+            if (have) seg++;
+            px = x; py = y; have = true;
+          }
+        };
+        if (fS) {
+          trace(hf, id(mySolarPrediction).state, 1.0f, 1, CH_FC, true);
+          trace(hs, std::max(0.0f, id(mySolarProduction).state), 1.0f, TH_SOLAR, CH_SOLAR, false);
+          // forecast ahead: from the live forecast at "now" out to +4 h
+          const float lv = id(mySolarPrediction).state;
+          int px = xnow, py = ymap(std::isnan(lv) ? 0 : lv);
+          for (int k = 0; k < 8; k++) {
+            if (std::isnan(fut[k])) break;
+            const int x = xnow + (int) roundf((k + 1) * (gx + gw - 1 - xnow) / 8.0f);
+            const int y = ymap(fut[k]);
+            for (int t = 0; t < TH_SOLAR; t++) it.line(px, py + t, x, y + t, CH_FC);
+            px = x; py = y;
+          }
+        }
+        // live value: myGridConsumption is already flipped to + export on the device
+        trace(hg, -id(myGridConsumption).state, -1.0f, 3, CH_GRID, false);
+        it.line(gx, gy + gh / 2, gx + gw, gy + gh / 2, COLOR_ON);              // zero line
+        if (fS) for (int yy = gy; yy < gy + gh; yy += 6) it.line(xnow, yy, xnow, yy + 2, COLOR_ON);   // now
+
         char a[12], b[12], l0[16], l1[16], l3[16], l4[16];
         auto num = [](float v, char *o, size_t n) {
           if (fabsf(v - roundf(v)) < 0.05f) snprintf(o, n, "%.0f", v); else snprintf(o, n, "%.1f", v);
@@ -1410,14 +1592,19 @@ display:
         const char *ylab[] = {l0, l1, "0", l3, l4};
         for (int i = 0; i < 5; i++)
           it.print(gx - 6, gy + i * gh / 4, id(f_tiny), TextAlign::CENTER_RIGHT, ylab[i]);
-        it.print(gx + gw - 2, gy + 2,  id(f_tiny), TextAlign::TOP_RIGHT, "export");
-        it.print(gx + gw - 2, gy + gh - 2, id(f_tiny), TextAlign::BOTTOM_RIGHT, "import");
-        it.print(gx,          gy + gh + 8, id(f_tiny), TextAlign::TOP_LEFT,   "-12h");
-        it.print(gx + gw / 2, gy + gh + 8, id(f_tiny), TextAlign::TOP_CENTER, "-6h");
-        it.print(gx + gw,     gy + gh + 8, id(f_tiny), TextAlign::TOP_RIGHT,  "now");
+        it.print(xnow - 4, gy + 2,      id(f_tiny), TextAlign::TOP_RIGHT,    "export");
+        it.print(xnow - 4, gy + gh - 2, id(f_tiny), TextAlign::BOTTOM_RIGHT, "import");
+        it.print(gx,                   gy + gh + 8, id(f_tiny), TextAlign::TOP_LEFT,   "-20h");
+        it.print(gx + (xnow - gx) / 2, gy + gh + 8, id(f_tiny), TextAlign::TOP_CENTER, "-10h");
+        if (fS) {
+          it.print(xnow,    gy + gh + 8, id(f_tiny), TextAlign::TOP_CENTER, "now");
+          it.print(gx + gw, gy + gh + 8, id(f_tiny), TextAlign::TOP_RIGHT,  "+4h");
+        } else {
+          it.print(gx + gw, gy + gh + 8, id(f_tiny), TextAlign::TOP_RIGHT,  "now");
+        }
       }
 
-      // ── PLANTS: five thirstiest (published by the E1003) ──
+      // ── PLANTS: five thirstiest (Home Assistant: sensor.panel_plants_needing_water) ──
       if (view == 1) {
         it.print(38, 234, id(f_label), "PLANTS · THIRSTIEST FIRST");
         float dry = id(plants_dry).state;
@@ -1461,7 +1648,7 @@ display:
           row++;
         }
         if (row == 0)
-          it.print(259, 346, id(f_small), TextAlign::CENTER, offline_msg() ? offline_msg() : "No plant data - is the reTerminal E1003 online?");
+          it.print(259, 346, id(f_small), TextAlign::CENTER, offline_msg() ? offline_msg() : "No plant data yet - check packages/panel_plants.yaml");
       }
 
       // ── HEATING: leading room, boiler, rooms overview ──
@@ -1755,6 +1942,7 @@ display:
           last7(hu == 1, vals);
           for (int i = 0; i < 7; i++) costs[i] = hu == 1 ? vals[i] * wprice + wstanding : vals[i] * price + standing;
         }
+        ha_bill(hu, costs);                                    // £ from Home Assistant when it has them
         float maxv = 0.001f, sa = 0, sg = 0;
         for (int i = 0; i < 7; i++) { maxv = std::max(maxv, vals[i]); sa += vals[i]; sg += costs[i]; }
         it.printf(x + 14, y + 56, id(f_cond), TextAlign::CENTER_LEFT, "£%.2f", sg);
@@ -1805,6 +1993,7 @@ display:
           snprintf(fn, sizeof(fn), "Updated %s · sleep starts soon", upd_s);
         else
           snprintf(fn, sizeof(fn), "Updated %s%s", upd_s, id(diy_awake).state ? " · staying awake" : "");
+        if (night_frame) snprintf(fn, sizeof(fn), "Updated %s · night sleep until %s%s", upd_s, nto_s, "${wake_hint}");
         if (sleepy) {
           const int fw = text_w(id(f_small), fn);
           it.print(776 - fw - 12, 471, id(f_icon_xs), TextAlign::CENTER, "\U000F04B2");
@@ -1849,7 +2038,7 @@ display:
         bool any = false;
         if (!id(ha_ok)) any |= chip("\U000F07D0", "Home Assistant offline");
         float dry = id(plants_dry).state;
-        if (plants_on && !std::isnan(dry) && dry > 0) {   // plants on (above) and shown on the E1003
+        if (plants_on && !std::isnan(dry) && dry > 0) {   // plants on (above)
           if (dry == 1) {
             const std::string &sum = id(plant_summary).state;
             std::string first = sum.substr(0, sum.find('|'));
@@ -1868,6 +2057,10 @@ display:
         const std::string &ha_alert = id(heat_alert).state;
         if (fH && !ha_alert.empty() && ha_alert != "unknown" && ha_alert != "unavailable")
           any |= chip("\U000F0238", ha_alert.c_str());
+        const std::string &ua = id(usage_alert).state;    // "Power …" / "Water …"
+        if ((fE || fW) && !ua.empty() && ua != "unknown" && ua != "unavailable" &&
+            (ua[0] == 'W' ? fW : fE))
+          any |= chip(ua[0] == 'W' ? "\U000F058C" : "\U000F0241", ua.c_str());
         if (!any) {
           it.print(8, 12, id(f_icon_xs), TextAlign::CENTER_LEFT, "\U000F05E1");
           it.print(26, 12, id(f_label), TextAlign::CENTER_LEFT, "All good");

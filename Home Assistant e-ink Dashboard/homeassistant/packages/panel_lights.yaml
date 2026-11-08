@@ -58,8 +58,27 @@ template:
             {% elif p | count < 6 %}{{ p + [d.area] }}
             {% else %}{{ p }}{% endif %}
 
-  # ───── What the Lights page shows; follows every light / device as it changes ─────
-  - sensor:
+  # ───── What the Lights page shows ─────
+  # Straight away when a light, switch or device changes, and every 30 s for the room
+  # sensors. (Not on every sensor reading – it goes through every area each time.)
+  - triggers:
+      - trigger: event
+        event_type: state_changed
+      - trigger: time_pattern
+        seconds: "/30"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: event
+        event_type: esphome.panel_lights
+    conditions:
+      - condition: template
+        value_template: >
+          {{ trigger.platform != 'event' or trigger.event.event_type != 'state_changed'
+             or trigger.event.data.entity_id.split('.')[0] in
+                ['light', 'switch', 'fan', 'cover', 'media_player', 'input_boolean', 'climate', 'lock', 'valve'] }}
+    sensor:
       - name: "Panel Lights"
         unique_id: panel_lights
         icon: mdi:lightbulb-group

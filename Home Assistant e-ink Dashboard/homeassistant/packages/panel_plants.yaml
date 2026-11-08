@@ -11,6 +11,49 @@
 
 input_number:
 
+  # ── Plants: the water in each plant's reservoir, and its size ───────────
+  # Every panel reads these, and any of them can water a plant (the E1003 by
+  # tapping it, a dashboard with the "Water a plant" script). Home Assistant
+  # empties them every 5 minutes (automation below).
+  plant_reservoir_glasses:
+    name: "Plant Reservoir"
+    min: 1
+    max: 5
+    step: 1
+    unit_of_measurement: "glasses"
+    mode: slider
+    icon: mdi:beaker-outline
+  plant_warning_days:
+    name: "Plant Warning"
+    min: 0.5
+    max: 5
+    step: 0.5
+    unit_of_measurement: "d"
+    mode: slider
+    icon: mdi:water-alert-outline
+  plant_1_level:
+    name: "Plant 1 Water"
+    min: 0
+    max: 10000
+    step: 0.1
+    unit_of_measurement: "ml"
+    mode: box
+    icon: mdi:water
+  plant_2_level: {name: "Plant 2 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_3_level: {name: "Plant 3 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_4_level: {name: "Plant 4 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_5_level: {name: "Plant 5 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_6_level: {name: "Plant 6 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_7_level: {name: "Plant 7 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_8_level: {name: "Plant 8 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_9_level: {name: "Plant 9 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_10_level: {name: "Plant 10 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_11_level: {name: "Plant 11 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_12_level: {name: "Plant 12 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_13_level: {name: "Plant 13 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_14_level: {name: "Plant 14 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+  plant_15_level: {name: "Plant 15 Water", min: 0, max: 10000, step: 0.1, unit_of_measurement: "ml", mode: box, icon: mdi:water}
+
   # ── Plants: how fast the panel's plant reservoirs empty ─────────────────
   # Glass size (ml) and how many days one glass lasts at 20 °C, per plant.
   # The panel works out evaporation from these and the room temperature.
@@ -117,7 +160,93 @@ input_text:
   plant_15_name: {name: "Plant 15 Name", max: 24, icon: mdi:rename}
 
 
+# Water a plant from any dashboard or automation: script.panel_water_plant with
+# plant: 1…15 (and glasses: how many, default 1). The reservoir won't overfill.
+script:
+  panel_water_plant:
+    alias: "Water a plant"
+    icon: mdi:watering-can
+    mode: queued
+    fields:
+      plant:
+        name: Plant
+        description: "1…15"
+        required: true
+        selector:
+          number: {min: 1, max: 15, mode: box}
+      glasses:
+        name: Glasses
+        default: 1
+        selector:
+          number: {min: 0.5, max: 5, step: 0.5, mode: box}
+    sequence:
+      - variables:
+          n: "{{ plant | int }}"
+          glass: "{{ states('input_number.plant_' ~ n ~ '_glass_ml') | float(250) }}"
+          cap: "{{ glass * states('input_number.plant_reservoir_glasses') | float(2) }}"
+          level: "{{ states('input_number.plant_' ~ n ~ '_level') | float(0) }}"
+      - action: input_number.set_value
+        target:
+          entity_id: "input_number.plant_{{ n }}_level"
+        data:
+          value: "{{ [cap, level + glass * (glasses | default(1) | float(1))] | min | round(0) }}"
+
+
+  # The reTerminal E1003 calls this once after its v28 update, to hand over the water
+  # levels it used to keep itself. Only plants that have no level here yet are set.
+  panel_plants_import:
+    alias: "Plants – import water levels"
+    icon: mdi:import
+    mode: single
+    fields:
+      levels:
+        name: Levels
+        description: "ml for plants 1…15, comma separated"
+        required: true
+        selector:
+          text:
+    sequence:
+      - repeat:
+          for_each: >
+            {% set ns = namespace(o=[]) %}
+            {% for v in (levels | string).split(',') %}
+              {% if loop.index <= 15 and v | float(0) > 0
+                    and states('input_number.plant_' ~ loop.index ~ '_level') | float(0) <= 0 %}
+                {% set ns.o = ns.o + [{'n': loop.index, 'ml': [v | float, 10000] | min | round(0)}] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.o }}
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: "input_number.plant_{{ repeat.item.n }}_level"
+              data:
+                value: "{{ repeat.item.ml }}"
+
+
 template:
+
+  # ───── PLANTS: water left, thirstiest first – read by every panel ─────
+  # state = how many need water (less than "Plant Warning" days left)
+  # summary = the 5 thirstiest, "name|days left|percent|room;…"
+  # plants = every plant in use (JSON, see panel_plants.jinja → plant_status)
+  - sensor:
+      - name: "Panel Plants Needing Water"
+        unique_id: panel_plants_needing_water
+        icon: mdi:watering-can-outline
+        state: >
+          {% from 'panel_plants.jinja' import plant_status %}
+          {% set w = states('input_number.plant_warning_days') | float(1) %}
+          {{ plant_status() | from_json | selectattr('left', 'lt', w) | list | count }}
+        attributes:
+          summary: >
+            {% from 'panel_plants.jinja' import plant_status %}
+            {% set ns = namespace(o=[]) %}
+            {% for p in (plant_status() | from_json | sort(attribute='left'))[:5] %}
+              {% set ns.o = ns.o + [[p.name | replace('|', '/') | replace(';', ','), p.left, p.pct | int, p.room] | join('|')] %}
+            {% endfor %}
+            {{ ns.o | join(';') }}
+          plants: "{% from 'panel_plants.jinja' import plant_status %}{{ plant_status() }}"
 
   # ───── PLANTS: which room each plant is in ─────
   # Pick a room for each plant with the "Plant N Room" selects (any dashboard,
@@ -358,6 +487,51 @@ template:
 # ── Automation: sample plants ───────────────────────────────────────────────
 
 automation:
+
+  # First start: a 2-glass reservoir and a 1-day warning (both still at their minimum)
+  - id: plants_default_reservoir
+    alias: "Plants – default reservoir and warning"
+    triggers:
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('input_number.plant_reservoir_glasses') | float(0) <= 1
+             and states('input_number.plant_warning_days') | float(0) <= 0.5 }}
+    actions:
+      - action: input_number.set_value
+        target: {entity_id: input_number.plant_reservoir_glasses}
+        data: {value: 2}
+      - action: input_number.set_value
+        target: {entity_id: input_number.plant_warning_days}
+        data: {value: 1}
+
+  # Plants drink: every 5 minutes each reservoir loses what that plant drinks
+  # in 5 minutes at its room's temperature (panel_plants.jinja → plant_per_day)
+  - id: plants_drink
+    alias: "Plants – drink"
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+    actions:
+      - repeat:
+          for_each: "{{ range(1, 16) | list }}"
+          sequence:
+            - variables:
+                level: "{{ states('input_number.plant_' ~ repeat.item ~ '_level') | float(0) }}"
+            - if:
+                - condition: template
+                  value_template: "{{ level > 0 }}"
+              then:
+                - action: input_number.set_value
+                  target:
+                    entity_id: "input_number.plant_{{ repeat.item }}_level"
+                  data:
+                    value: >
+                      {% from 'panel_plants.jinja' import plant_per_day %}
+                      {{ [0, level - (plant_per_day(repeat.item) | float(0)) * 5 / 1440] | max | round(1) }}
 
   # Sample names, icons, glass size and days per glass for 15 plants. At
   # start-up it only fills helpers that were never set (empty name, glass

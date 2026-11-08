@@ -301,6 +301,15 @@ utility_meter:
     name: "Grid Energy Monthly"
     source: sensor.grid_import_energy
     cycle: monthly
+  # today's kWh, the same on every panel (they read these instead of counting themselves)
+  grid_import_today:
+    name: "Grid Import Today"
+    source: *grid_import_energy
+    cycle: daily
+  grid_export_today:
+    name: "Grid Export Today"
+    source: *grid_export_energy
+    cycle: daily
 
 
 # ── Automation ──────────────────────────────────────────────────────────────

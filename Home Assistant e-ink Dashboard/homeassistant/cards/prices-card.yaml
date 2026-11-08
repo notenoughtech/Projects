@@ -2,7 +2,8 @@
 # Dashboard → ⋮ Edit → + Add card → Manual → paste all of this.
 # Both panels read these helpers, so a change here shows up on the next
 # refresh. The heating price and limits also sync with the reTerminal's
-# Settings page (changing them there updates these, and the other way round).
+# Settings page (changing them there updates these, and the other way round),
+# and so do the electricity and water alerts (Settings → Alerts).
 # A row that says "Entity not available": that feature's package isn't
 # installed, or (water) the tariff helpers aren't created yet – see
 # packages/panel_water.yaml. Delete the rows you don't use.
@@ -21,6 +22,14 @@ cards:
       - type: divider
       - entity: sensor.monthly_grid_cost
         name: This month so far
+      - type: section
+        label: Alerts (0 = off)
+      - entity: input_number.energy_alert_day_kwh
+        name: Per day
+      - entity: input_number.energy_alert_week_kwh
+        name: Per week
+      - entity: input_number.energy_alert_month_kwh
+        name: Per month
   - type: entities
     title: Water
     icon: mdi:water
@@ -34,24 +43,46 @@ cards:
       - type: divider
       - entity: sensor.panel_water_history
         name: Used in the last 30 days
+      - type: section
+        label: Alerts (0 = off)
+      - entity: input_number.water_alert_day_litres
+        name: Per day
+      - entity: input_number.water_alert_week_litres
+        name: Per week
+      - entity: input_number.water_alert_month_litres
+        name: Per month
   - type: entities
     title: Heating
     icon: mdi:fire
     entities:
       - entity: input_number.heating_cost_per_hour
         name: Boiler cost per hour
+      - type: section
+        label: Alerts (0 = off)
       - entity: input_select.heating_limit_by
         name: Alert by
       - entity: input_number.heating_limit_day_hours
         name: Daily limit (hours)
       - entity: input_number.heating_limit_week_hours
         name: Weekly limit (hours)
+      - entity: input_number.heating_limit_month_hours
+        name: Monthly limit (hours)
       - entity: input_number.heating_limit_day_cost
         name: Daily budget
       - entity: input_number.heating_limit_week_cost
         name: Weekly budget
+      - entity: input_number.heating_limit_month_cost
+        name: Monthly budget
       - type: divider
       - entity: sensor.heating_on_today
         name: Boiler on today
       - entity: sensor.heating_on_this_week
         name: Boiler on this week
+  - type: entities
+    title: Alerts now
+    icon: mdi:alert-circle-outline
+    entities:
+      - entity: sensor.panel_usage_alert
+        name: Electricity and water
+      - entity: sensor.panel_heating_alert
+        name: Heating
